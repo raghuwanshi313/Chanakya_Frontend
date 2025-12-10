@@ -8,6 +8,7 @@ export const PaintCanvas = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeTool, setActiveTool] = useState<Tool>("pencil");
   const [activeColor, setActiveColor] = useState("#000000");
+  const [backgroundColor, setBackgroundColor] = useState("#ffffff");
   const [brushSize, setBrushSize] = useState(5);
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
@@ -48,8 +49,8 @@ export const PaintCanvas = () => {
     canvas.width = container.clientWidth;
     canvas.height = container.clientHeight;
 
-    // Fill with white background
-    ctx.fillStyle = "#ffffff";
+    // Fill with background color
+    ctx.fillStyle = backgroundColor;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Create preview canvas for shape drawing
@@ -84,7 +85,7 @@ export const PaintCanvas = () => {
       // Restore content
       const img = new Image();
       img.onload = () => {
-        ctx.fillStyle = "#ffffff";
+        ctx.fillStyle = backgroundColor;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0);
       };
@@ -151,7 +152,7 @@ export const PaintCanvas = () => {
     if (activeTool === "pencil" || activeTool === "eraser") {
       ctx.beginPath();
       ctx.arc(pos.x, pos.y, brushSize / 2, 0, Math.PI * 2);
-      ctx.fillStyle = activeTool === "eraser" ? "#ffffff" : activeColor;
+      ctx.fillStyle = activeTool === "eraser" ? backgroundColor : activeColor;
       ctx.fill();
     }
   };
@@ -168,7 +169,7 @@ export const PaintCanvas = () => {
     if (!ctx || !canvas) return;
 
     if (activeTool === "pencil" || activeTool === "eraser") {
-      const color = activeTool === "eraser" ? "#ffffff" : activeColor;
+      const color = activeTool === "eraser" ? backgroundColor : activeColor;
       drawLine(ctx, lastPoint.current, pos, color, brushSize);
       lastPoint.current = pos;
     } else if (["rectangle", "circle", "line"].includes(activeTool) && startPoint.current) {
@@ -186,7 +187,7 @@ export const PaintCanvas = () => {
         };
         img.src = history[historyIndex];
       } else {
-        ctx.fillStyle = "#ffffff";
+        ctx.fillStyle = backgroundColor;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         drawShape(ctx, startPoint.current!, pos);
       }
@@ -290,7 +291,7 @@ export const PaintCanvas = () => {
     const canvas = canvasRef.current;
     if (!ctx || !canvas) return;
 
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = backgroundColor;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     saveToHistory();
     toast("Canvas cleared!");
@@ -393,6 +394,8 @@ export const PaintCanvas = () => {
           onToolChange={setActiveTool}
           activeColor={activeColor}
           onColorChange={setActiveColor}
+          backgroundColor={backgroundColor}
+          onBackgroundColorChange={setBackgroundColor}
           brushSize={brushSize}
           onBrushSizeChange={setBrushSize}
           onUndo={handleUndo}
