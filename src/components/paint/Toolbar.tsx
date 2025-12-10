@@ -8,13 +8,14 @@ import {
   Undo2, 
   Redo2, 
   Trash2, 
-  Download,
+  Save,
   PaintBucket
 } from "lucide-react";
 import { ToolButton } from "./ToolButton";
 import { ColorPalette } from "./ColorPalette";
 import { BrushSizeSlider } from "./BrushSizeSlider";
 import { Separator } from "@/components/ui/separator";
+import { SavedPagesGallery } from "./SavedPagesGallery";
 
 export type Tool = "select" | "pencil" | "eraser" | "rectangle" | "circle" | "line" | "fill";
 
@@ -29,6 +30,7 @@ interface ToolbarProps {
   onRedo: () => void;
   onClear: () => void;
   onSave: () => void;
+  onLoadPage: (canvasData: string) => void;
   canUndo: boolean;
   canRedo: boolean;
 }
@@ -44,6 +46,7 @@ export const Toolbar = ({
   onRedo,
   onClear,
   onSave,
+  onLoadPage,
   canUndo,
   canRedo,
 }: ToolbarProps) => {
@@ -140,11 +143,12 @@ export const Toolbar = ({
           onClick={onClear}
         />
         <ToolButton
-          icon={Download}
-          label="Save Image"
+          icon={Save}
+          label="Save Drawing"
           shortcut="Ctrl+S"
           onClick={onSave}
         />
+        <SavedPagesGallery onLoad={onLoadPage} />
       </div>
     </div>
   );
