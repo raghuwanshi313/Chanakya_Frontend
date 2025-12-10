@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Canvas as FabricCanvas, PencilBrush, Rect, Circle, Line, FabricObject } from "fabric";
 import { Toolbar, Tool } from "./Toolbar";
 import { savePage, SavedPage } from "./SavedPagesGallery";
 import { toast } from "sonner";
@@ -7,40 +6,60 @@ import { toast } from "sonner";
 export const PaintCanvas = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [fabricCanvas, setFabricCanvas] = useState<FabricCanvas | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>("pencil");
   const [activeColor, setActiveColor] = useState("#000000");
   const [brushSize, setBrushSize] = useState(5);
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-  const isDrawingShape = useRef(false);
+  
+  const isDrawing = useRef(false);
+  const lastPoint = useRef<{ x: number; y: number } | null>(null);
   const startPoint = useRef<{ x: number; y: number } | null>(null);
-  const currentShape = useRef<FabricObject | null>(null);
+  const previewCanvas = useRef<HTMLCanvasElement | null>(null);
+
+  // Get canvas context
+  const getContext = useCallback(() => {
+    return canvasRef.current?.getContext("2d");
+  }, []);
+
+  // Save current canvas state to history
+  const saveToHistory = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const dataUrl = canvas.toDataURL();
+    setHistory((prev) => {
+      const newHistory = prev.slice(0, historyIndex + 1);
+      return [...newHistory, dataUrl];
+    });
+    setHistoryIndex((prev) => prev + 1);
+  }, [historyIndex]);
 
   // Initialize canvas
   useEffect(() => {
-    if (!canvasRef.current || !containerRef.current) return;
-
+    const canvas = canvasRef.current;
     const container = containerRef.current;
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+    if (!canvas || !container) return;
 
-    const canvas = new FabricCanvas(canvasRef.current, {
-      width,
-      height,
-      backgroundColor: "#ffffff",
-      isDrawingMode: true,
-    });
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
-    // Initialize brush
-    canvas.freeDrawingBrush = new PencilBrush(canvas);
-    canvas.freeDrawingBrush.color = activeColor;
-    canvas.freeDrawingBrush.width = brushSize;
+    // Set canvas size
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
 
-    setFabricCanvas(canvas);
-    
+    // Fill with white background
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Create preview canvas for shape drawing
+    const preview = document.createElement("canvas");
+    preview.width = canvas.width;
+    preview.height = canvas.height;
+    previewCanvas.current = preview;
+
     // Save initial state
-    const initialState = JSON.stringify(canvas.toJSON());
+    const initialState = canvas.toDataURL();
     setHistory([initialState]);
     setHistoryIndex(0);
 
@@ -48,189 +67,270 @@ export const PaintCanvas = () => {
 
     // Handle resize
     const handleResize = () => {
-      const newWidth = container.clientWidth;
-      const newHeight = container.clientHeight;
-      canvas.setDimensions({ width: newWidth, height: newHeight });
-      canvas.renderAll();
+      if (!container || !canvas) return;
+      
+      // Save current content
+      const imageData = canvas.toDataURL();
+      
+      // Resize canvas
+      canvas.width = container.clientWidth;
+      canvas.height = container.clientHeight;
+      
+      if (previewCanvas.current) {
+        previewCanvas.current.width = canvas.width;
+        previewCanvas.current.height = canvas.height;
+      }
+      
+      // Restore content
+      const img = new Image();
+      img.onload = () => {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+      };
+      img.src = imageData;
     };
 
     window.addEventListener("resize", handleResize);
-
-    return () => {
-      window.removeEventListener("resize", handleResize);
-      canvas.dispose();
-    };
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Save to history
-  const saveToHistory = useCallback(() => {
-    if (!fabricCanvas) return;
-    
-    const state = JSON.stringify(fabricCanvas.toJSON());
-    setHistory((prev) => {
-      const newHistory = prev.slice(0, historyIndex + 1);
-      return [...newHistory, state];
-    });
-    setHistoryIndex((prev) => prev + 1);
-  }, [fabricCanvas, historyIndex]);
+  // Get mouse/touch position relative to canvas
+  const getPointerPosition = (e: React.MouseEvent | React.TouchEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
 
-  // Handle object modifications
-  useEffect(() => {
-    if (!fabricCanvas) return;
+    const rect = canvas.getBoundingClientRect();
+    let clientX: number, clientY: number;
 
-    const handleModified = () => saveToHistory();
-    
-    fabricCanvas.on("object:added", handleModified);
-    fabricCanvas.on("object:modified", handleModified);
-    fabricCanvas.on("object:removed", handleModified);
-
-    return () => {
-      fabricCanvas.off("object:added", handleModified);
-      fabricCanvas.off("object:modified", handleModified);
-      fabricCanvas.off("object:removed", handleModified);
-    };
-  }, [fabricCanvas, saveToHistory]);
-
-  // Update tool settings
-  useEffect(() => {
-    if (!fabricCanvas) return;
-
-    const isDrawingTool = activeTool === "pencil" || activeTool === "eraser";
-    fabricCanvas.isDrawingMode = isDrawingTool;
-    fabricCanvas.selection = activeTool === "select";
-
-    if (isDrawingTool && fabricCanvas.freeDrawingBrush) {
-      fabricCanvas.freeDrawingBrush.color = activeTool === "eraser" ? "#ffffff" : activeColor;
-      fabricCanvas.freeDrawingBrush.width = brushSize;
-    }
-
-    // Update cursor based on tool
-    if (activeTool === "select") {
-      fabricCanvas.defaultCursor = "default";
-    } else if (isDrawingTool) {
-      fabricCanvas.defaultCursor = "crosshair";
+    if ("touches" in e) {
+      if (e.touches.length === 0) return null;
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
     } else {
-      fabricCanvas.defaultCursor = "crosshair";
+      clientX = e.clientX;
+      clientY = e.clientY;
     }
-  }, [activeTool, activeColor, brushSize, fabricCanvas]);
 
-  // Handle shape drawing
-  useEffect(() => {
-    if (!fabricCanvas) return;
-
-    const isShapeTool = ["rectangle", "circle", "line"].includes(activeTool);
-
-    const handleMouseDown = (e: any) => {
-      if (!isShapeTool || !e.pointer) return;
-      
-      isDrawingShape.current = true;
-      startPoint.current = { x: e.pointer.x, y: e.pointer.y };
-
-      let shape: FabricObject | null = null;
-
-      if (activeTool === "rectangle") {
-        shape = new Rect({
-          left: e.pointer.x,
-          top: e.pointer.y,
-          width: 0,
-          height: 0,
-          fill: "transparent",
-          stroke: activeColor,
-          strokeWidth: brushSize,
-        });
-      } else if (activeTool === "circle") {
-        shape = new Circle({
-          left: e.pointer.x,
-          top: e.pointer.y,
-          radius: 0,
-          fill: "transparent",
-          stroke: activeColor,
-          strokeWidth: brushSize,
-        });
-      } else if (activeTool === "line") {
-        shape = new Line([e.pointer.x, e.pointer.y, e.pointer.x, e.pointer.y], {
-          stroke: activeColor,
-          strokeWidth: brushSize,
-        });
-      }
-
-      if (shape) {
-        currentShape.current = shape;
-        fabricCanvas.add(shape);
-      }
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top,
     };
+  };
 
-    const handleMouseMove = (e: any) => {
-      if (!isDrawingShape.current || !startPoint.current || !currentShape.current || !e.pointer) return;
+  // Draw line between two points
+  const drawLine = (
+    ctx: CanvasRenderingContext2D,
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    color: string,
+    size: number
+  ) => {
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  };
 
-      const { x: startX, y: startY } = startPoint.current;
-      const { x: currentX, y: currentY } = e.pointer;
+  // Handle drawing start
+  const handlePointerDown = (e: React.MouseEvent | React.TouchEvent) => {
+    const pos = getPointerPosition(e);
+    if (!pos) return;
 
-      if (activeTool === "rectangle") {
-        const width = Math.abs(currentX - startX);
-        const height = Math.abs(currentY - startY);
-        currentShape.current.set({
-          left: Math.min(startX, currentX),
-          top: Math.min(startY, currentY),
-          width,
-          height,
-        });
-      } else if (activeTool === "circle") {
-        const radius = Math.sqrt(
-          Math.pow(currentX - startX, 2) + Math.pow(currentY - startY, 2)
-        ) / 2;
-        currentShape.current.set({
-          left: (startX + currentX) / 2 - radius,
-          top: (startY + currentY) / 2 - radius,
-          radius,
-        });
-      } else if (activeTool === "line") {
-        (currentShape.current as Line).set({
-          x2: currentX,
-          y2: currentY,
-        });
+    isDrawing.current = true;
+    lastPoint.current = pos;
+    startPoint.current = pos;
+
+    const ctx = getContext();
+    if (!ctx) return;
+
+    if (activeTool === "pencil" || activeTool === "eraser") {
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, brushSize / 2, 0, Math.PI * 2);
+      ctx.fillStyle = activeTool === "eraser" ? "#ffffff" : activeColor;
+      ctx.fill();
+    }
+  };
+
+  // Handle drawing movement
+  const handlePointerMove = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!isDrawing.current) return;
+
+    const pos = getPointerPosition(e);
+    if (!pos || !lastPoint.current) return;
+
+    const ctx = getContext();
+    const canvas = canvasRef.current;
+    if (!ctx || !canvas) return;
+
+    if (activeTool === "pencil" || activeTool === "eraser") {
+      const color = activeTool === "eraser" ? "#ffffff" : activeColor;
+      drawLine(ctx, lastPoint.current, pos, color, brushSize);
+      lastPoint.current = pos;
+    } else if (["rectangle", "circle", "line"].includes(activeTool) && startPoint.current) {
+      // Draw preview on main canvas by restoring and redrawing
+      const preview = previewCanvas.current;
+      if (!preview) return;
+
+      // Restore original state
+      if (history[historyIndex]) {
+        const img = new Image();
+        img.onload = () => {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+          drawShape(ctx, startPoint.current!, pos);
+        };
+        img.src = history[historyIndex];
+      } else {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        drawShape(ctx, startPoint.current!, pos);
       }
+    }
+  };
 
-      fabricCanvas.renderAll();
-    };
+  // Draw shape helper
+  const drawShape = (
+    ctx: CanvasRenderingContext2D,
+    start: { x: number; y: number },
+    end: { x: number; y: number }
+  ) => {
+    ctx.strokeStyle = activeColor;
+    ctx.lineWidth = brushSize;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
 
-    const handleMouseUp = () => {
-      isDrawingShape.current = false;
+    if (activeTool === "rectangle") {
+      const width = end.x - start.x;
+      const height = end.y - start.y;
+      ctx.strokeRect(start.x, start.y, width, height);
+    } else if (activeTool === "circle") {
+      const radius = Math.sqrt(
+        Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
+      );
+      ctx.beginPath();
+      ctx.arc(start.x, start.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (activeTool === "line") {
+      ctx.beginPath();
+      ctx.moveTo(start.x, start.y);
+      ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+    }
+  };
+
+  // Handle drawing end
+  const handlePointerUp = () => {
+    if (isDrawing.current) {
+      isDrawing.current = false;
+      lastPoint.current = null;
       startPoint.current = null;
-      currentShape.current = null;
-    };
-
-    if (isShapeTool) {
-      fabricCanvas.on("mouse:down", handleMouseDown);
-      fabricCanvas.on("mouse:move", handleMouseMove);
-      fabricCanvas.on("mouse:up", handleMouseUp);
+      saveToHistory();
     }
+  };
 
-    return () => {
-      fabricCanvas.off("mouse:down", handleMouseDown);
-      fabricCanvas.off("mouse:move", handleMouseMove);
-      fabricCanvas.off("mouse:up", handleMouseUp);
+  // Handle fill tool click
+  const handleClick = (e: React.MouseEvent) => {
+    if (activeTool !== "fill") return;
+
+    const ctx = getContext();
+    const canvas = canvasRef.current;
+    if (!ctx || !canvas) return;
+
+    // Simple fill - fill entire canvas with color
+    ctx.fillStyle = activeColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    saveToHistory();
+    toast("Canvas filled!");
+  };
+
+  // Undo
+  const handleUndo = useCallback(() => {
+    if (historyIndex <= 0) return;
+
+    const canvas = canvasRef.current;
+    const ctx = getContext();
+    if (!canvas || !ctx) return;
+
+    const newIndex = historyIndex - 1;
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      setHistoryIndex(newIndex);
     };
-  }, [fabricCanvas, activeTool, activeColor, brushSize]);
+    img.src = history[newIndex];
+  }, [historyIndex, history, getContext]);
 
-  // Handle fill tool
-  useEffect(() => {
-    if (!fabricCanvas || activeTool !== "fill") return;
+  // Redo
+  const handleRedo = useCallback(() => {
+    if (historyIndex >= history.length - 1) return;
 
-    const handleClick = (e: any) => {
-      if (e.target) {
-        e.target.set("fill", activeColor);
-        fabricCanvas.renderAll();
-        saveToHistory();
-      }
+    const canvas = canvasRef.current;
+    const ctx = getContext();
+    if (!canvas || !ctx) return;
+
+    const newIndex = historyIndex + 1;
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      setHistoryIndex(newIndex);
+    };
+    img.src = history[newIndex];
+  }, [historyIndex, history, getContext]);
+
+  // Clear canvas
+  const handleClear = () => {
+    const ctx = getContext();
+    const canvas = canvasRef.current;
+    if (!ctx || !canvas) return;
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    saveToHistory();
+    toast("Canvas cleared!");
+  };
+
+  // Save drawing
+  const handleSave = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const thumbnail = canvas.toDataURL("image/png", 0.5);
+    const canvasData = canvas.toDataURL("image/png");
+
+    const page: SavedPage = {
+      id: Date.now().toString(),
+      name: `Drawing ${new Date().toLocaleTimeString()}`,
+      thumbnail,
+      canvasData,
+      createdAt: Date.now(),
     };
 
-    fabricCanvas.on("mouse:down", handleClick);
+    savePage(page);
+    toast.success("Drawing saved!");
+  }, []);
 
-    return () => {
-      fabricCanvas.off("mouse:down", handleClick);
+  // Load saved page
+  const handleLoadPage = (canvasData: string) => {
+    const canvas = canvasRef.current;
+    const ctx = getContext();
+    if (!canvas || !ctx) return;
+
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      saveToHistory();
+      toast.success("Drawing loaded!");
     };
-  }, [fabricCanvas, activeTool, activeColor, saveToHistory]);
+    img.src = canvasData;
+  };
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -248,7 +348,6 @@ export const PaintCanvas = () => {
         }
       } else {
         switch (e.key.toLowerCase()) {
-          case "v": setActiveTool("select"); break;
           case "p": setActiveTool("pencil"); break;
           case "e": setActiveTool("eraser"); break;
           case "r": setActiveTool("rectangle"); break;
@@ -261,68 +360,22 @@ export const PaintCanvas = () => {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [historyIndex, history]);
+  }, [handleUndo, handleRedo, handleSave]);
 
-  const handleUndo = () => {
-    if (historyIndex <= 0 || !fabricCanvas) return;
-    
-    const newIndex = historyIndex - 1;
-    fabricCanvas.loadFromJSON(JSON.parse(history[newIndex])).then(() => {
-      fabricCanvas.renderAll();
-      setHistoryIndex(newIndex);
-    });
-  };
-
-  const handleRedo = () => {
-    if (historyIndex >= history.length - 1 || !fabricCanvas) return;
-    
-    const newIndex = historyIndex + 1;
-    fabricCanvas.loadFromJSON(JSON.parse(history[newIndex])).then(() => {
-      fabricCanvas.renderAll();
-      setHistoryIndex(newIndex);
-    });
-  };
-
-  const handleClear = () => {
-    if (!fabricCanvas) return;
-    fabricCanvas.clear();
-    fabricCanvas.backgroundColor = "#ffffff";
-    fabricCanvas.renderAll();
-    saveToHistory();
-    toast("Canvas cleared!");
-  };
-
-  const handleSave = () => {
-    if (!fabricCanvas) return;
-    
-    const thumbnail = fabricCanvas.toDataURL({
-      format: "png",
-      quality: 0.5,
-      multiplier: 0.3,
-    });
-    
-    const canvasData = JSON.stringify(fabricCanvas.toJSON());
-    
-    const page: SavedPage = {
-      id: Date.now().toString(),
-      name: `Drawing ${new Date().toLocaleTimeString()}`,
-      thumbnail,
-      canvasData,
-      createdAt: Date.now(),
-    };
-    
-    savePage(page);
-    toast.success("Drawing saved!");
-  };
-
-  const handleLoadPage = (canvasData: string) => {
-    if (!fabricCanvas) return;
-    
-    fabricCanvas.loadFromJSON(JSON.parse(canvasData)).then(() => {
-      fabricCanvas.renderAll();
-      saveToHistory();
-      toast.success("Drawing loaded!");
-    });
+  // Get cursor style based on tool
+  const getCursor = () => {
+    switch (activeTool) {
+      case "pencil":
+      case "eraser":
+      case "rectangle":
+      case "circle":
+      case "line":
+        return "crosshair";
+      case "fill":
+        return "cell";
+      default:
+        return "default";
+    }
   };
 
   return (
@@ -354,11 +407,22 @@ export const PaintCanvas = () => {
 
       {/* Canvas Area */}
       <div className="flex-1 p-4 overflow-hidden">
-        <div 
+        <div
           ref={containerRef}
           className="w-full h-full bg-canvas rounded-lg border border-canvas-border shadow-inner overflow-hidden"
         >
-          <canvas ref={canvasRef} />
+          <canvas
+            ref={canvasRef}
+            style={{ cursor: getCursor() }}
+            onMouseDown={handlePointerDown}
+            onMouseMove={handlePointerMove}
+            onMouseUp={handlePointerUp}
+            onMouseLeave={handlePointerUp}
+            onTouchStart={handlePointerDown}
+            onTouchMove={handlePointerMove}
+            onTouchEnd={handlePointerUp}
+            onClick={handleClick}
+          />
         </div>
       </div>
 

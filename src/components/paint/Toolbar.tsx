@@ -4,7 +4,6 @@ import {
   Square, 
   Circle, 
   Minus, 
-  MousePointer2, 
   Undo2, 
   Redo2, 
   Trash2, 
@@ -17,7 +16,7 @@ import { BrushSizeSlider } from "./BrushSizeSlider";
 import { Separator } from "@/components/ui/separator";
 import { SavedPagesGallery } from "./SavedPagesGallery";
 
-export type Tool = "select" | "pencil" | "eraser" | "rectangle" | "circle" | "line" | "fill";
+export type Tool = "pencil" | "eraser" | "rectangle" | "circle" | "line" | "fill";
 
 interface ToolbarProps {
   activeTool: Tool;
@@ -54,13 +53,6 @@ export const Toolbar = ({
     <div className="flex items-center gap-1 px-3 py-2 bg-toolbar rounded-lg">
       {/* Selection & Drawing Tools */}
       <div className="flex items-center gap-0.5">
-        <ToolButton
-          icon={MousePointer2}
-          label="Select"
-          shortcut="V"
-          isActive={activeTool === "select"}
-          onClick={() => onToolChange("select")}
-        />
         <ToolButton
           icon={Pencil}
           label="Pencil"
