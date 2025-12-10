@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Canvas as FabricCanvas, PencilBrush, Rect, Circle, Line, FabricObject } from "fabric";
 import { Toolbar, Tool } from "./Toolbar";
+import { savePage, SavedPage } from "./SavedPagesGallery";
 import { toast } from "sonner";
 
 export const PaintCanvas = () => {
@@ -294,18 +295,34 @@ export const PaintCanvas = () => {
   const handleSave = () => {
     if (!fabricCanvas) return;
     
-    const dataURL = fabricCanvas.toDataURL({
+    const thumbnail = fabricCanvas.toDataURL({
       format: "png",
-      quality: 1,
-      multiplier: 2,
+      quality: 0.5,
+      multiplier: 0.3,
     });
     
-    const link = document.createElement("a");
-    link.download = `painting-${Date.now()}.png`;
-    link.href = dataURL;
-    link.click();
+    const canvasData = JSON.stringify(fabricCanvas.toJSON());
     
-    toast.success("Image saved!");
+    const page: SavedPage = {
+      id: Date.now().toString(),
+      name: `Drawing ${new Date().toLocaleTimeString()}`,
+      thumbnail,
+      canvasData,
+      createdAt: Date.now(),
+    };
+    
+    savePage(page);
+    toast.success("Drawing saved!");
+  };
+
+  const handleLoadPage = (canvasData: string) => {
+    if (!fabricCanvas) return;
+    
+    fabricCanvas.loadFromJSON(JSON.parse(canvasData)).then(() => {
+      fabricCanvas.renderAll();
+      saveToHistory();
+      toast.success("Drawing loaded!");
+    });
   };
 
   return (
@@ -329,6 +346,7 @@ export const PaintCanvas = () => {
           onRedo={handleRedo}
           onClear={handleClear}
           onSave={handleSave}
+          onLoadPage={handleLoadPage}
           canUndo={historyIndex > 0}
           canRedo={historyIndex < history.length - 1}
         />
