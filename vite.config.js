@@ -17,8 +17,8 @@ export default defineConfig(({ mode }) => ({
       registerType: "autoUpdate",
       includeAssets: ["favicon.ico", "robots.txt"],
       manifest: {
-        name: "MyPaint - Raspberry Pi Edition",
-        short_name: "MyPaint",
+        name: "Chanakya - Raspberry Pi Edition",
+        short_name: "Chanakya",
         description: "A lightweight paint application optimized for Raspberry Pi",
         theme_color: "#1a202c",
         background_color: "#1a202c",

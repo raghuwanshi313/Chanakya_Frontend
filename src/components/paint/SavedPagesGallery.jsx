@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-const STORAGE_KEY = "mypaint-saved-pages";
+const STORAGE_KEY = "chanakya-saved-pages";
 
 export const getSavedPages = () => {
   try {

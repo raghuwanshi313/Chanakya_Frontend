@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Toolbar } from "./Toolbar";
 import { savePage } from "./SavedPagesGallery";
 import { toast } from "sonner";
+import { uploadCanvas, initializeStorage } from "@/services/storageService";
 
 export const PaintCanvas = () => {
   const canvasRef = useRef(null);
@@ -12,6 +13,8 @@ export const PaintCanvas = () => {
   const [brushSize, setBrushSize] = useState(5);
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const isInitialized = useRef(false);
+  const prevBackgroundColor = useRef("#ffffff");
   
   const isDrawing = useRef(false);
   const lastPoint = useRef(null);
@@ -49,6 +52,14 @@ export const PaintCanvas = () => {
     canvas.width = container.clientWidth;
     canvas.height = container.clientHeight;
 
+    // Initialize local storage
+    initializeStorage().then(({ success, error }) => {
+      if (!success) {
+        console.error("Storage initialization error:", error);
+        toast.error("Failed to initialize local storage");
+      }
+    });
+
     // Fill with background color
     ctx.fillStyle = backgroundColor;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -63,8 +74,9 @@ export const PaintCanvas = () => {
     const initialState = canvas.toDataURL();
     setHistory([initialState]);
     setHistoryIndex(0);
+    isInitialized.current = true;
 
-    toast("Canvas ready! Start drawing!");
+    toast("Chanaya is ready!");
 
     // Handle resize
     const handleResize = () => {
@@ -95,6 +107,58 @@ export const PaintCanvas = () => {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+
+  // Handle background color change - replace old background with new one
+  useEffect(() => {
+    if (!isInitialized.current) return;
+    if (prevBackgroundColor.current === backgroundColor) return;
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // Get the current image data
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    
+    // Parse old and new background colors
+    const oldBg = hexToRgb(prevBackgroundColor.current);
+    const newBg = hexToRgb(backgroundColor);
+    
+    if (oldBg && newBg) {
+      // Replace old background color pixels with new background color
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        
+        // Check if pixel matches old background (with some tolerance)
+        if (Math.abs(r - oldBg.r) < 10 && 
+            Math.abs(g - oldBg.g) < 10 && 
+            Math.abs(b - oldBg.b) < 10) {
+          data[i] = newBg.r;
+          data[i + 1] = newBg.g;
+          data[i + 2] = newBg.b;
+        }
+      }
+      
+      ctx.putImageData(imageData, 0, 0);
+    }
+    
+    prevBackgroundColor.current = backgroundColor;
+  }, [backgroundColor]);
+
+  // Helper function to convert hex to RGB
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+      r: parseInt(result[1], 16),
+      g: parseInt(result[2], 16),
+      b: parseInt(result[3], 16)
+    } : null;
+  };
 
   // Get mouse/touch position relative to canvas
   const getPointerPosition = (e) => {
@@ -288,23 +352,34 @@ export const PaintCanvas = () => {
   };
 
   // Save drawing
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const thumbnail = canvas.toDataURL("image/png", 0.5);
     const canvasData = canvas.toDataURL("image/png");
 
+    // Save to local storage
+    toast.loading("Saving...");
+    const uploadResult = await uploadCanvas(canvas);
+    
     const page = {
       id: Date.now().toString(),
       name: `Drawing ${new Date().toLocaleTimeString()}`,
       thumbnail,
       canvasData,
+      localUrl: uploadResult.success ? uploadResult.url : canvasData,
+      localPath: uploadResult.path,
       createdAt: Date.now(),
     };
 
     savePage(page);
-    toast.success("Drawing saved!");
+    
+    if (uploadResult.success) {
+      toast.success("Drawing saved!");
+    } else {
+      toast.error("Failed to save drawing");
+    }
   }, []);
 
   // Load saved page
@@ -373,7 +448,7 @@ export const PaintCanvas = () => {
     <div className="flex flex-col h-screen bg-workspace">
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-2 bg-toolbar border-b border-toolbar-foreground/10">
-        <h1 className="text-lg font-semibold text-toolbar-foreground">MyPaint</h1>
+        <h1 className="text-lg font-semibold text-toolbar-foreground">Chanakya</h1>
         <span className="text-xs text-toolbar-foreground/60">Raspberry Pi Edition</span>
       </header>
 
