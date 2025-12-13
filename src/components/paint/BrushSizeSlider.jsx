@@ -1,12 +1,7 @@
 import { Slider } from "@/components/ui/slider";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
-interface BrushSizeSliderProps {
-  size: number;
-  onSizeChange: (size: number) => void;
-}
-
-export const BrushSizeSlider = ({ size, onSizeChange }: BrushSizeSliderProps) => {
+export const BrushSizeSlider = ({ size, onSizeChange }) => {
   return (
     <Popover>
       <PopoverTrigger asChild>

@@ -1,16 +1,7 @@
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { LucideIcon } from "lucide-react";
 
-interface ToolButtonProps {
-  icon: LucideIcon;
-  label: string;
-  isActive?: boolean;
-  onClick: () => void;
-  shortcut?: string;
-}
-
-export const ToolButton = ({ icon: Icon, label, isActive, onClick, shortcut }: ToolButtonProps) => {
+export const ToolButton = ({ icon: Icon, label, isActive, onClick, shortcut }) => {
   return (
     <Tooltip>
       <TooltipTrigger asChild>

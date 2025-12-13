@@ -20,31 +20,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export type Tool = "pencil" | "eraser" | "rectangle" | "circle" | "line" | "fill";
-
 const BG_COLORS = [
   "#FFFFFF", "#F5F5F5", "#E0E0E0", "#000000",
   "#FFF8E1", "#E3F2FD", "#E8F5E9", "#FCE4EC",
   "#F3E5F5", "#FFFDE7", "#E0F7FA", "#FBE9E7",
 ];
-
-interface ToolbarProps {
-  activeTool: Tool;
-  onToolChange: (tool: Tool) => void;
-  activeColor: string;
-  onColorChange: (color: string) => void;
-  backgroundColor: string;
-  onBackgroundColorChange: (color: string) => void;
-  brushSize: number;
-  onBrushSizeChange: (size: number) => void;
-  onUndo: () => void;
-  onRedo: () => void;
-  onClear: () => void;
-  onSave: () => void;
-  onLoadPage: (canvasData: string) => void;
-  canUndo: boolean;
-  canRedo: boolean;
-}
 
 export const Toolbar = ({
   activeTool,
@@ -62,7 +42,7 @@ export const Toolbar = ({
   onLoadPage,
   canUndo,
   canRedo,
-}: ToolbarProps) => {
+}) => {
   return (
     <div className="flex items-center gap-1 px-3 py-2 bg-toolbar rounded-lg">
       {/* Selection & Drawing Tools */}

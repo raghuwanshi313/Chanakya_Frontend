@@ -10,21 +10,9 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-export interface SavedPage {
-  id: string;
-  name: string;
-  thumbnail: string;
-  canvasData: string;
-  createdAt: number;
-}
-
-interface SavedPagesGalleryProps {
-  onLoad: (canvasData: string) => void;
-}
-
 const STORAGE_KEY = "mypaint-saved-pages";
 
-export const getSavedPages = (): SavedPage[] => {
+export const getSavedPages = () => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     return saved ? JSON.parse(saved) : [];
@@ -33,19 +21,19 @@ export const getSavedPages = (): SavedPage[] => {
   }
 };
 
-export const savePage = (page: SavedPage) => {
+export const savePage = (page) => {
   const pages = getSavedPages();
   pages.unshift(page);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(pages));
 };
 
-export const deletePage = (id: string) => {
+export const deletePage = (id) => {
   const pages = getSavedPages().filter((p) => p.id !== id);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(pages));
 };
 
-export const SavedPagesGallery = ({ onLoad }: SavedPagesGalleryProps) => {
-  const [pages, setPages] = useState<SavedPage[]>([]);
+export const SavedPagesGallery = ({ onLoad }) => {
+  const [pages, setPages] = useState([]);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -54,13 +42,13 @@ export const SavedPagesGallery = ({ onLoad }: SavedPagesGalleryProps) => {
     }
   }, [open]);
 
-  const handleDelete = (id: string, e: React.MouseEvent) => {
+  const handleDelete = (id, e) => {
     e.stopPropagation();
     deletePage(id);
     setPages(getSavedPages());
   };
 
-  const handleLoad = (canvasData: string) => {
+  const handleLoad = (canvasData) => {
     onLoad(canvasData);
     setOpen(false);
   };

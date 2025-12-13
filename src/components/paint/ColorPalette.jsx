@@ -12,12 +12,7 @@ const PRESET_COLORS = [
   "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F",
 ];
 
-interface ColorPaletteProps {
-  activeColor: string;
-  onColorChange: (color: string) => void;
-}
-
-export const ColorPalette = ({ activeColor, onColorChange }: ColorPaletteProps) => {
+export const ColorPalette = ({ activeColor, onColorChange }) => {
   return (
     <div className="flex items-center gap-2">
       <Popover>

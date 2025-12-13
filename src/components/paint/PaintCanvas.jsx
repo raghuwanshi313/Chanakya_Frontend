@@ -1,22 +1,22 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Toolbar, Tool } from "./Toolbar";
-import { savePage, SavedPage } from "./SavedPagesGallery";
+import { Toolbar } from "./Toolbar";
+import { savePage } from "./SavedPagesGallery";
 import { toast } from "sonner";
 
 export const PaintCanvas = () => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [activeTool, setActiveTool] = useState<Tool>("pencil");
+  const canvasRef = useRef(null);
+  const containerRef = useRef(null);
+  const [activeTool, setActiveTool] = useState("pencil");
   const [activeColor, setActiveColor] = useState("#000000");
   const [backgroundColor, setBackgroundColor] = useState("#ffffff");
   const [brushSize, setBrushSize] = useState(5);
-  const [history, setHistory] = useState<string[]>([]);
+  const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   
   const isDrawing = useRef(false);
-  const lastPoint = useRef<{ x: number; y: number } | null>(null);
-  const startPoint = useRef<{ x: number; y: number } | null>(null);
-  const previewCanvas = useRef<HTMLCanvasElement | null>(null);
+  const lastPoint = useRef(null);
+  const startPoint = useRef(null);
+  const previewCanvas = useRef(null);
 
   // Get canvas context
   const getContext = useCallback(() => {
@@ -97,12 +97,12 @@ export const PaintCanvas = () => {
   }, []);
 
   // Get mouse/touch position relative to canvas
-  const getPointerPosition = (e: React.MouseEvent | React.TouchEvent) => {
+  const getPointerPosition = (e) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
 
     const rect = canvas.getBoundingClientRect();
-    let clientX: number, clientY: number;
+    let clientX, clientY;
 
     if ("touches" in e) {
       if (e.touches.length === 0) return null;
@@ -120,13 +120,7 @@ export const PaintCanvas = () => {
   };
 
   // Draw line between two points
-  const drawLine = (
-    ctx: CanvasRenderingContext2D,
-    from: { x: number; y: number },
-    to: { x: number; y: number },
-    color: string,
-    size: number
-  ) => {
+  const drawLine = (ctx, from, to, color, size) => {
     ctx.beginPath();
     ctx.moveTo(from.x, from.y);
     ctx.lineTo(to.x, to.y);
@@ -138,7 +132,7 @@ export const PaintCanvas = () => {
   };
 
   // Handle drawing start
-  const handlePointerDown = (e: React.MouseEvent | React.TouchEvent) => {
+  const handlePointerDown = (e) => {
     const pos = getPointerPosition(e);
     if (!pos) return;
 
@@ -158,7 +152,7 @@ export const PaintCanvas = () => {
   };
 
   // Handle drawing movement
-  const handlePointerMove = (e: React.MouseEvent | React.TouchEvent) => {
+  const handlePointerMove = (e) => {
     if (!isDrawing.current) return;
 
     const pos = getPointerPosition(e);
@@ -183,23 +177,19 @@ export const PaintCanvas = () => {
         img.onload = () => {
           ctx.clearRect(0, 0, canvas.width, canvas.height);
           ctx.drawImage(img, 0, 0);
-          drawShape(ctx, startPoint.current!, pos);
+          drawShape(ctx, startPoint.current, pos);
         };
         img.src = history[historyIndex];
       } else {
         ctx.fillStyle = backgroundColor;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        drawShape(ctx, startPoint.current!, pos);
+        drawShape(ctx, startPoint.current, pos);
       }
     }
   };
 
   // Draw shape helper
-  const drawShape = (
-    ctx: CanvasRenderingContext2D,
-    start: { x: number; y: number },
-    end: { x: number; y: number }
-  ) => {
+  const drawShape = (ctx, start, end) => {
     ctx.strokeStyle = activeColor;
     ctx.lineWidth = brushSize;
     ctx.lineCap = "round";
@@ -235,7 +225,7 @@ export const PaintCanvas = () => {
   };
 
   // Handle fill tool click
-  const handleClick = (e: React.MouseEvent) => {
+  const handleClick = (e) => {
     if (activeTool !== "fill") return;
 
     const ctx = getContext();
@@ -305,7 +295,7 @@ export const PaintCanvas = () => {
     const thumbnail = canvas.toDataURL("image/png", 0.5);
     const canvasData = canvas.toDataURL("image/png");
 
-    const page: SavedPage = {
+    const page = {
       id: Date.now().toString(),
       name: `Drawing ${new Date().toLocaleTimeString()}`,
       thumbnail,
@@ -318,7 +308,7 @@ export const PaintCanvas = () => {
   }, []);
 
   // Load saved page
-  const handleLoadPage = (canvasData: string) => {
+  const handleLoadPage = (canvasData) => {
     const canvas = canvasRef.current;
     const ctx = getContext();
     if (!canvas || !ctx) return;
@@ -335,7 +325,7 @@ export const PaintCanvas = () => {
 
   // Keyboard shortcuts
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (e) => {
       if (e.ctrlKey || e.metaKey) {
         if (e.key === "z") {
           e.preventDefault();
