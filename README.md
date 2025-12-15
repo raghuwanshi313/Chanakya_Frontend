@@ -1,73 +1,160 @@
-# Welcome to your Lovable project
+# 🎨 Chanakya - Drawing Application
 
-## Project info
+A web-based drawing/paint application built with React, designed to run on Raspberry Pi 5.
 
-**URL**: https://lovable.dev/projects/6004fd06-2420-4879-a4d0-a3cc7ab85a64
+![React](https://img.shields.io/badge/React-18-blue)
+![Vite](https://img.shields.io/badge/Vite-5-purple)
+![TailwindCSS](https://img.shields.io/badge/TailwindCSS-3-cyan)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-## How can I edit this code?
+## ✨ Features
 
-There are several ways of editing your application.
+- 🖌️ **Drawing Tools** - Pencil, Eraser, Shapes (Rectangle, Circle, Line), Fill bucket
+- 🎨 **Color Picker** - 24 preset colors + custom color selector
+- 📏 **Brush Size** - Adjustable brush size (1-100px)
+- ↩️ **Undo/Redo** - Full history support
+- 💾 **Save Options** - Save to gallery, download PNG, save to specific folder
+- 🖼️ **Gallery** - View and load previously saved drawings
+- 🌈 **Background Color** - Changeable canvas background
+- ⌨️ **Keyboard Shortcuts** - Quick tool switching
+- 📱 **Touch Support** - Works with touch screens
+- 🔌 **Offline Mode** - Works without internet connection
 
-**Use Lovable**
+## 🛠️ Tech Stack
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/6004fd06-2420-4879-a4d0-a3cc7ab85a64) and start prompting.
+| Technology   | Purpose       |
+| ------------ | ------------- |
+| React 18     | UI Framework  |
+| Vite         | Build Tool    |
+| Tailwind CSS | Styling       |
+| shadcn/ui    | UI Components |
+| HTML5 Canvas | Drawing       |
+| localStorage | Data Storage  |
 
-Changes made via Lovable will be committed automatically to this repo.
+## 🚀 Quick Start
 
-**Use your preferred IDE**
+### Prerequisites
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+- Node.js 18+
+- npm or yarn
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+### Installation
 
-Follow these steps:
+```bash
+# Clone the repository
+git clone https://github.com/raghuwanshi313/EDP_APP.git
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+# Navigate to project directory
+cd EDP_APP
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+# Install dependencies
+npm install
 
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Start development server
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+Open your browser at `http://localhost:8080`
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### Production Build
 
-**Use GitHub Codespaces**
+```bash
+# Build for production
+npm run build
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+# Preview production build
+npm run preview
+```
 
-## What technologies are used for this project?
+## ⌨️ Keyboard Shortcuts
 
-This project is built with:
+| Key      | Action              |
+| -------- | ------------------- |
+| `P`      | Pencil tool         |
+| `E`      | Eraser tool         |
+| `R`      | Rectangle tool      |
+| `C`      | Circle tool         |
+| `L`      | Line tool           |
+| `G`      | Fill (paint bucket) |
+| `Ctrl+Z` | Undo                |
+| `Ctrl+Y` | Redo                |
+| `Ctrl+S` | Save                |
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+## 📁 Project Structure
 
-## How can I deploy this project?
+```
+src/
+├── components/
+│   ├── paint/
+│   │   ├── PaintCanvas.jsx    # Main canvas component
+│   │   ├── Toolbar.jsx        # Top toolbar
+│   │   ├── ToolButton.jsx     # Tool button component
+│   │   ├── ColorPalette.jsx   # Color picker
+│   │   ├── BrushSizeSlider.jsx# Brush size control
+│   │   └── SavedPagesGallery.jsx # Gallery component
+│   └── ui/                    # Reusable UI components
+├── services/
+│   └── storageService.js      # File saving utilities
+├── pages/
+│   ├── Index.jsx              # Home page
+│   └── NotFound.jsx           # 404 page
+└── App.jsx                    # Main app component
+```
 
-Simply open [Lovable](https://lovable.dev/projects/6004fd06-2420-4879-a4d0-a3cc7ab85a64) and click on Share -> Publish.
+## 🍓 Running on Raspberry Pi 5
 
-## Can I connect a custom domain to my Lovable project?
+### Install Node.js on Pi
 
-Yes, you can!
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
+sudo apt install -y nodejs
+```
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+### Deploy and Run
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+```bash
+# Copy project to Pi (from your PC)
+scp -r EDP_APP pi@YOUR_PI_IP:/home/pi/
+
+# On Raspberry Pi
+cd /home/pi/EDP_APP
+npm install
+npm run build
+npm run preview -- --host
+```
+
+### Kiosk Mode (Full Screen)
+
+```bash
+chromium-browser --kiosk http://localhost:8080
+```
+
+## 💾 Data Storage
+
+All data is stored locally - **no external APIs or databases required**:
+
+- **Gallery** - Saved in browser's localStorage
+- **Download** - Direct PNG download to device
+- **Folder Save** - Save to specific folder (Chrome/Edge)
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+## 👨‍💻 Author
+
+**Aman Raghuwanshi**
+
+- GitHub: [@raghuwanshi313](https://github.com/raghuwanshi313)
+
+---
+
+Made with ❤️ for Raspberry Pi
