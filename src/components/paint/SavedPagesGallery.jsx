@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Trash2, Image, X } from "lucide-react";
+import { Trash2, Image, X, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,16 +15,25 @@ const STORAGE_KEY = "chanakya-saved-pages";
 export const getSavedPages = () => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
+    console.log("Getting saved pages:", saved ? JSON.parse(saved).length : 0, "items");
     return saved ? JSON.parse(saved) : [];
-  } catch {
+  } catch (error) {
+    console.error("Error getting saved pages:", error);
     return [];
   }
 };
 
 export const savePage = (page) => {
-  const pages = getSavedPages();
-  pages.unshift(page);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(pages));
+  try {
+    const pages = getSavedPages();
+    pages.unshift(page);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(pages));
+    console.log("Saved page successfully. Total pages:", pages.length);
+    return true;
+  } catch (error) {
+    console.error("Error saving page:", error);
+    return false;
+  }
 };
 
 export const deletePage = (id) => {
@@ -36,10 +45,24 @@ export const SavedPagesGallery = ({ onLoad }) => {
   const [pages, setPages] = useState([]);
   const [open, setOpen] = useState(false);
 
+  // Refresh pages when dialog opens
   useEffect(() => {
     if (open) {
-      setPages(getSavedPages());
+      const savedPages = getSavedPages();
+      console.log("Gallery opened, found pages:", savedPages.length);
+      setPages(savedPages);
     }
+  }, [open]);
+
+  // Also listen for storage changes (for cross-tab sync)
+  useEffect(() => {
+    const handleStorageChange = () => {
+      if (open) {
+        setPages(getSavedPages());
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, [open]);
 
   const handleDelete = (id, e) => {
@@ -51,6 +74,12 @@ export const SavedPagesGallery = ({ onLoad }) => {
   const handleLoad = (canvasData) => {
     onLoad(canvasData);
     setOpen(false);
+  };
+
+  const handleRefresh = () => {
+    const savedPages = getSavedPages();
+    console.log("Manual refresh, found pages:", savedPages.length);
+    setPages(savedPages);
   };
 
   return (
@@ -67,7 +96,13 @@ export const SavedPagesGallery = ({ onLoad }) => {
       </DialogTrigger>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Saved Drawings</DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle>Saved Drawings</DialogTitle>
+            <Button variant="ghost" size="sm" onClick={handleRefresh} className="mr-6">
+              <RefreshCw className="w-4 h-4 mr-1" />
+              Refresh
+            </Button>
+          </div>
         </DialogHeader>
         <ScrollArea className="h-[400px] pr-4">
           {pages.length === 0 ? (

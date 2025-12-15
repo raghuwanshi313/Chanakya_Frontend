@@ -214,3 +214,102 @@ export const getPublicUrl = async (fileName) => {
         return "";
     }
 };
+
+// Store the folder handle for reuse
+let savedFolderHandle = null;
+
+/**
+ * Pick a folder to save files to (using File System Access API)
+ * @returns {Promise<{success: boolean, handle?: FileSystemDirectoryHandle, error?: any}>}
+ */
+export const pickSaveFolder = async () => {
+    try {
+        if (!('showDirectoryPicker' in window)) {
+            return { success: false, error: "File System Access API not supported in this browser" };
+        }
+
+        const handle = await window.showDirectoryPicker({
+            mode: 'readwrite',
+            startIn: 'pictures'
+        });
+
+        savedFolderHandle = handle;
+        return { success: true, handle, folderName: handle.name };
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            return { success: false, error: "Folder selection cancelled" };
+        }
+        console.error("Error picking folder:", error);
+        return { success: false, error };
+    }
+};
+
+/**
+ * Save canvas to the selected folder
+ * @param {HTMLCanvasElement} canvas - The canvas element
+ * @param {string} fileName - The file name
+ * @param {FileSystemDirectoryHandle} folderHandle - Optional folder handle (uses saved one if not provided)
+ * @returns {Promise<{success: boolean, path?: string, error?: any}>}
+ */
+export const saveCanvasToFolder = async (canvas, fileName = null, folderHandle = null) => {
+    try {
+        const handle = folderHandle || savedFolderHandle;
+
+        if (!handle) {
+            return { success: false, error: "No folder selected. Please select a folder first." };
+        }
+
+        const timestamp = Date.now();
+        const name = fileName || `drawing-${timestamp}.png`;
+
+        // Create file in the folder
+        const fileHandle = await handle.getFileHandle(name, { create: true });
+        const writable = await fileHandle.createWritable();
+
+        // Convert canvas to blob
+        const blob = await new Promise((resolve) => {
+            canvas.toBlob((b) => resolve(b), 'image/png');
+        });
+
+        await writable.write(blob);
+        await writable.close();
+
+        return { success: true, path: `${handle.name}/${name}`, fileName: name };
+    } catch (error) {
+        console.error("Error saving to folder:", error);
+        return { success: false, error: error.message || error };
+    }
+};
+
+/**
+ * Download canvas as file (traditional download - goes to Downloads folder)
+ * @param {HTMLCanvasElement} canvas - The canvas element
+ * @param {string} fileName - The file name
+ */
+export const downloadCanvas = (canvas, fileName = null) => {
+    const timestamp = Date.now();
+    const name = fileName || `drawing-${timestamp}.png`;
+
+    const link = document.createElement('a');
+    link.download = name;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+
+    return { success: true, fileName: name };
+};
+
+/**
+ * Check if a save folder is already selected
+ * @returns {boolean}
+ */
+export const hasSavedFolder = () => {
+    return savedFolderHandle !== null;
+};
+
+/**
+ * Get the name of the saved folder
+ * @returns {string|null}
+ */
+export const getSavedFolderName = () => {
+    return savedFolderHandle ? savedFolderHandle.name : null;
+};
