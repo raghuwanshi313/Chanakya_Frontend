@@ -2,13 +2,6 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Toolbar } from "./Toolbar";
 import { savePage } from "./SavedPagesGallery";
 import { toast } from "sonner";
-import { 
-  pickSaveFolder, 
-  saveCanvasToFolder, 
-  downloadCanvas,
-  hasSavedFolder,
-  getSavedFolderName 
-} from "@/services/storageService";
 
 export const PaintCanvas = () => {
   const canvasRef = useRef(null);
@@ -19,7 +12,6 @@ export const PaintCanvas = () => {
   const [brushSize, setBrushSize] = useState(5);
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-  const [saveFolder, setSaveFolder] = useState(getSavedFolderName());
   const isInitialized = useRef(false);
   const prevBackgroundColor = useRef("#ffffff");
   
@@ -350,7 +342,7 @@ export const PaintCanvas = () => {
     toast("Canvas cleared!");
   };
 
-  // Save drawing - NO API, only localStorage
+  // Save drawing only to offline gallery (IndexedDB)
   const handleSave = useCallback(async () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -358,52 +350,24 @@ export const PaintCanvas = () => {
     try {
       const thumbnail = canvas.toDataURL("image/png", 0.5);
       const canvasData = canvas.toDataURL("image/png");
-      
-      let savedPath = null;
 
-      // Try to save to selected folder first (File System API - local only)
-      if (hasSavedFolder()) {
-        const folderResult = await saveCanvasToFolder(canvas);
-        if (folderResult.success) {
-          savedPath = folderResult.path;
-        }
-      }
-      
-      // Save to localStorage (no API calls)
       const page = {
         id: Date.now().toString(),
         name: `Drawing ${new Date().toLocaleTimeString()}`,
         thumbnail,
         canvasData,
-        savedPath: savedPath,
         createdAt: Date.now(),
       };
 
       const saved = savePage(page);
-      
       if (saved) {
-        if (savedPath) {
-          toast.success(`Saved to folder: ${savedPath}`);
-        } else {
-          toast.success("Drawing saved to gallery!");
-        }
+        toast.success("Drawing saved to gallery (offline)");
       } else {
         toast.error("Failed to save drawing");
       }
     } catch (error) {
       console.error("Save error:", error);
       toast.error("Failed to save drawing");
-    }
-  }, []);
-
-  // Select folder for saving
-  const handleSelectFolder = useCallback(async () => {
-    const result = await pickSaveFolder();
-    if (result.success) {
-      setSaveFolder(result.folderName);
-      toast.success(`Save folder set to: ${result.folderName}`);
-    } else if (result.error !== "Folder selection cancelled") {
-      toast.error(result.error);
     }
   }, []);
 
@@ -506,9 +470,7 @@ export const PaintCanvas = () => {
           onLoadPage={handleLoadPage}
           canUndo={historyIndex > 0}
           canRedo={historyIndex < history.length - 1}
-          onSelectFolder={handleSelectFolder}
           onDownload={handleDownload}
-          saveFolder={saveFolder}
         />
       </div>
 

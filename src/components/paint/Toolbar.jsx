@@ -10,7 +10,6 @@ import {
   Save,
   PaintBucket,
   Palette,
-  FolderOpen,
   Download
 } from "lucide-react";
 import { ToolButton } from "./ToolButton";
@@ -44,9 +43,7 @@ export const Toolbar = ({
   onLoadPage,
   canUndo,
   canRedo,
-  onSelectFolder,
   onDownload,
-  saveFolder,
 }) => {
   return (
     <div className="flex items-center gap-1 px-3 py-2 bg-toolbar rounded-lg">
@@ -177,11 +174,6 @@ export const Toolbar = ({
           icon={Trash2}
           label="Clear Canvas"
           onClick={onClear}
-        />
-        <ToolButton
-          icon={FolderOpen}
-          label={saveFolder ? `Folder: ${saveFolder}` : "Select Save Folder"}
-          onClick={onSelectFolder}
         />
         <ToolButton
           icon={Save}
