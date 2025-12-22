@@ -1,6 +1,8 @@
-// LOCAL STORAGE SERVICE - NO API CALLS
-// All data stored in browser's IndexedDB
+// LOCAL STORAGE SERVICE - NO NETWORK CALLS
+// Provides helper functions to store drawings in the browser's IndexedDB
+// and to download or export them as files.
 
+// IndexedDB database / object store configuration
 const DB_NAME = "DrawingsDB";
 const DB_VERSION = 1;
 const STORE_NAME = "drawings";
@@ -8,6 +10,7 @@ const STORE_NAME = "drawings";
 /**
  * Initialize IndexedDB
  */
+// Open (or create) the IndexedDB database and object store.
 const initDB = () => {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -27,6 +30,8 @@ const initDB = () => {
 /**
  * Initialize storage (local only, no API calls)
  */
+// Call this once on app startup if you want to ensure the
+// IndexedDB database is created before the user interacts with it.
 export const initializeStorage = async () => {
     try {
         await initDB();
@@ -296,6 +301,30 @@ export const downloadCanvas = (canvas, fileName = null) => {
     link.click();
 
     return { success: true, fileName: name };
+};
+
+/**
+ * Download canvas to Downloads folder (alternative function)
+ * @param {HTMLCanvasElement} canvas - The canvas element
+ * @param {string} fileName - The file name
+ */
+export const downloadCanvasToDownloads = (canvas, fileName = null) => {
+    try {
+        const timestamp = Date.now();
+        const name = fileName || `drawing-${timestamp}.png`;
+
+        const link = document.createElement('a');
+        link.download = name;
+        link.href = canvas.toDataURL('image/png');
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        return { success: true, fileName: name };
+    } catch (error) {
+        console.error("Error downloading canvas:", error);
+        return { success: false, error: error.message || error };
+    }
 };
 
 /**

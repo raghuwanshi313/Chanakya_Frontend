@@ -1,3 +1,6 @@
+// Offline gallery for saved drawings.
+// Uses localStorage to persist a list of pages, each containing
+// a thumbnail and the full canvas data URL.
 import { useState, useEffect } from "react";
 import { Trash2, Image, X, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,8 +13,10 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
+// Single localStorage key under which all saved drawings are stored.
 const STORAGE_KEY = "chanakya-saved-pages";
 
+// Read and parse all saved pages from localStorage.
 export const getSavedPages = () => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -23,6 +28,7 @@ export const getSavedPages = () => {
   }
 };
 
+// Add a new page at the beginning of the list and persist to localStorage.
 export const savePage = (page) => {
   try {
     const pages = getSavedPages();
@@ -36,6 +42,7 @@ export const savePage = (page) => {
   }
 };
 
+// Remove a page by id and write the updated list back to localStorage.
 export const deletePage = (id) => {
   const pages = getSavedPages().filter((p) => p.id !== id);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(pages));

@@ -1,3 +1,5 @@
+// Small responsive helper hook.
+// Returns true when the viewport width is below MOBILE_BREAKPOINT.
 import * as React from "react";
 
 const MOBILE_BREAKPOINT = 768;
@@ -15,5 +17,6 @@ export function useIsMobile() {
     return () => mql.removeEventListener("change", onChange);
   }, []);
 
+  // Coerce undefined to false so callers always get a boolean.
   return !!isMobile;
 }

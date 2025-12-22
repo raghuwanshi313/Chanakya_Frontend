@@ -1,3 +1,5 @@
+// Fallback page for unknown routes (404).
+// Logs the invalid path and shows a simple message with a link home.
 import { useLocation } from "react-router-dom";
 import { useEffect } from "react";
 

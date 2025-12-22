@@ -1,3 +1,6 @@
+// Toolbar shown above the canvas.
+// Provides tool selection (pencil, shapes, fill), brush size, colors,
+// and actions like undo/redo, clear, save to gallery, download, and open gallery.
 import { 
   Pencil, 
   Eraser, 
@@ -10,7 +13,13 @@ import {
   Save,
   PaintBucket,
   Palette,
-  Download
+  Download,
+  Upload,
+  Highlighter,
+  Maximize,
+  Minimize,
+  Plus,
+  Check,
 } from "lucide-react";
 import { ToolButton } from "./ToolButton";
 import { ColorPalette } from "./ColorPalette";
@@ -20,6 +29,7 @@ import { SavedPagesGallery } from "./SavedPagesGallery";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useRef } from "react";
 
 const BG_COLORS = [
   "#FFFFFF", "#F5F5F5", "#E0E0E0", "#000000",
@@ -44,9 +54,46 @@ export const Toolbar = ({
   canUndo,
   canRedo,
   onDownload,
+  onImportImage,
+  onAddPage,
+  onSwitchPage,
+  pages = [],
+  currentPageId,
+  isMaximized,
+  onToggleMaximize,
+  orientation,
+  onToggleOrientation,
+  onPlaceImage,
+  hasImportedImage,
 }) => {
+  const fileInputRef = useRef(null);
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
+    if (!allowedTypes.includes(file.type)) {
+      alert("Please select a valid image (JPG, PNG) or PDF file");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result;
+      if (typeof result === 'string') {
+        onImportImage(result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   return (
-    <div className="flex items-center gap-1 px-3 py-2 bg-toolbar rounded-lg">
+    <div className="flex items-center gap-1 px-3 py-2 bg-toolbar rounded-lg overflow-x-auto">
       {/* Selection & Drawing Tools */}
       <div className="flex items-center gap-0.5">
         <ToolButton
@@ -69,6 +116,13 @@ export const Toolbar = ({
           shortcut="G"
           isActive={activeTool === "fill"}
           onClick={() => onToolChange("fill")}
+        />
+        <ToolButton
+          icon={Highlighter}
+          label="Highlighter"
+          shortcut="H"
+          isActive={activeTool === "highlighter"}
+          onClick={() => onToolChange("highlighter")}
         />
       </div>
 
@@ -155,6 +209,55 @@ export const Toolbar = ({
       </Popover>
 
       <div className="flex-1" />
+
+      {/* Import & Pages */}
+      <div className="flex items-center gap-0.5">
+        <ToolButton
+          icon={Upload}
+          label="Import Image"
+          title="Import JPG, PNG, PDF"
+          onClick={handleImportClick}
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".jpg,.jpeg,.png,.pdf"
+          onChange={handleFileSelect}
+          className="hidden"
+        />
+        {hasImportedImage && (
+          <ToolButton
+            icon={Check}
+            label="Place Image"
+            title="Finalize image position"
+            onClick={onPlaceImage}
+          />
+        )}
+        <ToolButton
+          icon={Plus}
+          label="New Page"
+          onClick={onAddPage}
+        />
+      </div>
+
+      <Separator orientation="vertical" className="h-6 bg-toolbar-foreground/20" />
+
+      {/* View Options */}
+      <div className="flex items-center gap-0.5">
+        <ToolButton
+          icon={isMaximized ? Minimize : Maximize}
+          label={isMaximized ? "Minimize" : "Maximize"}
+          onClick={onToggleMaximize}
+        />
+        <ToolButton
+          icon={Minus}
+          label={`${orientation === "portrait" ? "Portrait" : "Landscape"}`}
+          title="Toggle View Mode"
+          onClick={onToggleOrientation}
+        />
+      </div>
+
+      <Separator orientation="vertical" className="h-6 bg-toolbar-foreground/20" />
 
       {/* Actions */}
       <div className="flex items-center gap-0.5">
