@@ -124,3 +124,112 @@
     @apply bg-toolbar-active text-accent-foreground;
   }
 }
+
+/* PDF Viewer Styles */
+.pdf-document {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.react-pdf__Page {
+  max-width: 100%;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.2);
+  margin: 0;
+}
+
+.react-pdf__Page__canvas {
+  max-width: 100%;
+  height: auto !important;
+}
+
+.react-pdf__Page__textContent {
+  max-width: 100%;
+}
+
+.react-pdf__Page__annotations {
+  max-width: 100%;
+}
+/* PDF Text Layer - required by react-pdf for text selection */
+.react-pdf__Page__textContent {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  opacity: 0.2;
+  line-height: 1;
+  font-weight: bold;
+  font-size: 10px;
+}
+
+.react-pdf__Page__textContent > span {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-transform: scaleY(1);
+  -moz-transform: scaleY(1);
+  transform: scaleY(1);
+}
+
+.react-pdf__Page__textContent ::selection {
+  background: rgba(0, 123, 255, 0.3);
+}
+
+.react-pdf__Page__textContent ::-moz-selection {
+  background: rgba(0, 123, 255, 0.3);
+}
+
+/* Standard textLayer class for react-pdf */
+.textLayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.textLayer > span {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.textLayer ::selection {
+  background: rgba(0, 123, 255, 0.3);
+}
+
+.textLayer ::-moz-selection {
+  background: rgba(0, 123, 255, 0.3);
+}
+
+/* Selection highlight for PDF text */
+.textLayer .highlight {
+  margin: -1px;
+  padding: 1px;
+  background-color: rgba(255, 255, 0, 0.1);
+  border-radius: 4px;
+}
+
+.textLayer .highlight.begin {
+  border-radius: 4px 0 0 4px;
+}
+
+.textLayer .highlight.end {
+  border-radius: 0 4px 4px 0;
+}
+
+.textLayer .highlight.middle {
+  border-radius: 0;
+}
+
+.textLayer .highlight.selected {
+  background-color: rgba(0, 123, 255, 0.3);
+}

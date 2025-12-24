@@ -39,6 +39,7 @@ export const PaintCanvas = () => {
   const lastPoint = useRef(null);
   const startPoint = useRef(null);
   const previewCanvas = useRef(null);
+  const backupFileRef = useRef(null);
 
   // Get canvas context
   const getContext = useCallback(() => {
@@ -618,6 +619,33 @@ export const PaintCanvas = () => {
     }
   }, []);
 
+  // Download all pages as separate files
+  const handleDownloadAllPages = useCallback(() => {
+    if (pages.length === 0) {
+      toast.error("No pages to download");
+      return;
+    }
+
+    let downloadCount = 0;
+    pages.forEach((page, index) => {
+      if (page.canvasData) {
+        const link = document.createElement('a');
+        link.href = page.canvasData;
+        link.download = `${page.name.replace(/\s+/g, '_')}_${new Date().getTime()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        downloadCount++;
+      }
+    });
+
+    if (downloadCount > 0) {
+      toast.success(`Downloaded ${downloadCount} page(s)!`);
+    } else {
+      toast.error("No pages with content to download");
+    }
+  }, [pages]);
+
   // Load saved page
   const handleLoadPage = (canvasData) => {
     const canvas = canvasRef.current;
@@ -632,6 +660,52 @@ export const PaintCanvas = () => {
       toast.success("Drawing loaded!");
     };
     img.src = canvasData;
+  };
+
+  // Restore pages from a JSON backup file
+  const handleLoadBackupFile = (e) => {
+    try {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const parsed = JSON.parse(reader.result);
+          if (!Array.isArray(parsed) || parsed.length === 0) {
+            toast.error("Invalid or empty backup file");
+            return;
+          }
+          // Expecting an array of pages with { id, name, canvasData }
+          setPages(parsed);
+          const first = parsed[0];
+          if (first?.id) setCurrentPageId(first.id);
+
+          const canvas = canvasRef.current;
+          const ctx = getContext();
+          if (canvas && ctx && first?.canvasData) {
+            const img = new Image();
+            img.onload = () => {
+              ctx.clearRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0);
+              setHistory([first.canvasData]);
+              setHistoryIndex(0);
+              toast.success("Backup restored");
+            };
+            img.onerror = () => toast.error("Failed to load first page from backup");
+            img.src = first.canvasData;
+          } else {
+            toast.success("Backup restored");
+          }
+        } catch (err) {
+          console.error("Backup parse error:", err);
+          toast.error("Failed to parse backup JSON");
+        }
+      };
+      reader.readAsText(file);
+    } catch (err) {
+      console.error("Backup load error:", err);
+      toast.error("Failed to load backup file");
+    }
   };
 
   // Import image
@@ -828,6 +902,8 @@ export const PaintCanvas = () => {
           canUndo={historyIndex > 0}
           canRedo={historyIndex < history.length - 1}
           onDownload={handleDownload}
+          onDownloadAllPages={handleDownloadAllPages}
+          onLoadBackupFile={handleLoadBackupFile}
           onImportImage={handleImportImage}
           onAddPage={handleAddPage}
           onSwitchPage={handleSwitchPage}
@@ -839,6 +915,7 @@ export const PaintCanvas = () => {
           onToggleOrientation={() => setOrientation(orientation === "portrait" ? "landscape" : "portrait")}
           onPlaceImage={handlePlaceImage}
           hasImportedImage={!!importedImage}
+          backupFileRef={backupFileRef}
         />
       </div>
 

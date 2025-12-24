@@ -14,12 +14,14 @@ import {
   PaintBucket,
   Palette,
   Download,
+  DownloadCloud,
   Upload,
   Highlighter,
   Maximize,
   Minimize,
   Plus,
   Check,
+  FolderOpen,
 } from "lucide-react";
 import { ToolButton } from "./ToolButton";
 import { ColorPalette } from "./ColorPalette";
@@ -54,6 +56,8 @@ export const Toolbar = ({
   canUndo,
   canRedo,
   onDownload,
+  onDownloadAllPages,
+  onLoadBackupFile,
   onImportImage,
   onAddPage,
   onSwitchPage,
@@ -65,6 +69,7 @@ export const Toolbar = ({
   onToggleOrientation,
   onPlaceImage,
   hasImportedImage,
+  backupFileRef,
 }) => {
   const fileInputRef = useRef(null);
 
@@ -288,6 +293,30 @@ export const Toolbar = ({
           icon={Download}
           label="Download to Downloads"
           onClick={onDownload}
+        />
+        <ToolButton
+          icon={DownloadCloud}
+          label="Download All Pages"
+          onClick={onDownloadAllPages}
+        />
+      </div>
+
+      <Separator orientation="vertical" className="h-6 bg-toolbar-foreground/20" />
+
+      {/* Restore & Gallery */}
+      <div className="flex items-center gap-0.5">
+        <ToolButton
+          icon={FolderOpen}
+          label="Restore Backup"
+          title="Load pages from JSON backup"
+          onClick={() => backupFileRef?.current?.click()}
+        />
+        <input
+          ref={backupFileRef}
+          type="file"
+          accept=".json"
+          onChange={onLoadBackupFile}
+          className="hidden"
         />
         <SavedPagesGallery onLoad={onLoadPage} />
       </div>
