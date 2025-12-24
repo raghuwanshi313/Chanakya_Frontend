@@ -6,7 +6,7 @@ const Navigation = () => {
   const location = useLocation();
   
   return (
-    <nav className="fixed top-4 right-4 z-50 flex gap-2 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-2">
+    <nav className="fixed bottom-4 right-4 z-50 flex gap-2 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-2">
       <Link to="/">
         <Button
           variant={location.pathname === '/' ? 'default' : 'outline'}
