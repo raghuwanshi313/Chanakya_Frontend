@@ -1,6 +1,9 @@
-// LOCAL STORAGE SERVICE - NO NETWORK CALLS
+// LOCAL STORAGE SERVICE - Works in both Browser and Electron
 // Provides helper functions to store drawings in the browser's IndexedDB
 // and to download or export them as files.
+// Uses Electron native file system when running as desktop app.
+
+import { isElectron, saveFile as electronSaveFile, openFile as electronOpenFile } from './electronService';
 
 // IndexedDB database / object store configuration
 const DB_NAME = "DrawingsDB";
