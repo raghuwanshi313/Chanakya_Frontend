@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
+import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, rgb } from 'pdf-lib';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,11 +33,12 @@ import {
 import { toast } from 'sonner';
 import { saveFile } from '@/services/electronService';
 
-// Configure PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+// Configure PDF.js worker using Vite-resolved asset URL
+pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
 
 const PDFMerged = () => {
   const [file, setFile] = useState(null);
+  const [fileName, setFileName] = useState("");
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1.0);
@@ -49,6 +51,7 @@ const PDFMerged = () => {
   const [currentAnnotation, setCurrentAnnotation] = useState(null);
   const [drawColor, setDrawColor] = useState('#FF0000');
   const [drawSize, setDrawSize] = useState(3);
+  const [textSize, setTextSize] = useState(20);
   const [textInput, setTextInput] = useState('');
   const [textPosition, setTextPosition] = useState(null);
   
@@ -68,6 +71,28 @@ const PDFMerged = () => {
   const pageContainerRef = useRef(null); // The positioned page container we overlay on
   const pageRefs = useRef({}); // Refs for each page for scrolling
   const canvasRefs = useRef({}); // Canvas refs for each page
+
+  // --- Persistence helpers (sessionStorage) ---
+  const STORAGE_KEY = 'pdfEditorState';
+
+  const arrayBufferToBase64 = (buffer) => {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode.apply(null, chunk);
+    }
+    return btoa(binary);
+  };
+
+  const base64ToArrayBuffer = (base64) => {
+    const binary = atob(base64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
+  };
 
   // Inject additional styles for text layer z-index and selection
   useEffect(() => {
@@ -101,10 +126,25 @@ const PDFMerged = () => {
     const selectedFile = event.target.files[0];
     if (selectedFile && selectedFile.type === 'application/pdf') {
       setFile(selectedFile);
+      setFileName(selectedFile.name);
       
       const reader = new FileReader();
       reader.onload = async (e) => {
-        setPdfBytes(e.target.result);
+        const bytes = e.target.result;
+        setPdfBytes(bytes);
+        // Persist to sessionStorage
+        try {
+          const base64 = arrayBufferToBase64(bytes);
+          const snapshot = {
+            fileName: selectedFile.name,
+            pdfBytes: base64,
+            pageNumber,
+            scale,
+            annotations,
+            highlights,
+          };
+          sessionStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+        } catch {}
       };
       reader.readAsArrayBuffer(selectedFile);
       
@@ -116,8 +156,47 @@ const PDFMerged = () => {
 
   const onDocumentLoadSuccess = ({ numPages }) => {
     setNumPages(numPages);
-    setPageNumber(1);
+    // Keep current page if restored
+    if (!pageNumber || pageNumber < 1) setPageNumber(1);
   };
+
+  // Restore state from sessionStorage on mount
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (saved.pdfBytes) {
+          const bytes = base64ToArrayBuffer(saved.pdfBytes);
+          setPdfBytes(bytes);
+        }
+        if (saved.fileName) setFileName(saved.fileName);
+        if (typeof saved.pageNumber === 'number') setPageNumber(saved.pageNumber);
+        if (typeof saved.scale === 'number') setScale(saved.scale);
+        if (Array.isArray(saved.annotations)) setAnnotations(saved.annotations);
+        if (Array.isArray(saved.highlights)) setHighlights(saved.highlights);
+        toast.info('Restored PDF editor state');
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist key state changes
+  useEffect(() => {
+    try {
+      if (!pdfBytes) return;
+      const base64 = arrayBufferToBase64(pdfBytes);
+      const snapshot = {
+        fileName,
+        pdfBytes: base64,
+        pageNumber,
+        scale,
+        annotations,
+        highlights,
+      };
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    } catch {}
+  }, [pdfBytes, fileName, pageNumber, scale, annotations, highlights]);
 
   // Navigation
   const previousPage = () => setPageNumber(prev => Math.max(1, prev - 1));
@@ -211,7 +290,7 @@ const PDFMerged = () => {
       type: 'text',
       pageNumber,
       color: drawColor,
-      size: drawSize * 4,
+      size: textSize,
       text: textInput,
       position: textPosition
     };
@@ -638,10 +717,10 @@ const PDFMerged = () => {
           className="hidden"
         />
         
-        {file && (
+        {(file || pdfBytes) && (
           <span className="text-sm text-gray-600 flex items-center gap-1">
             <FileText className="h-4 w-4" />
-            {file.name}
+            {fileName || (file ? file.name : 'PDF document')}
           </span>
         )}
         
@@ -763,6 +842,19 @@ const PDFMerged = () => {
             title="Brush size"
           />
         )}
+
+        {/* Text size control */}
+        {activeTool === 'text' && !isHighlightMode && (
+          <Input
+            type="number"
+            min="8"
+            max="96"
+            value={textSize}
+            onChange={(e) => setTextSize(Number(e.target.value) || 12)}
+            className="w-20"
+            title="Text size (px)"
+          />
+        )}
         
         <Separator orientation="vertical" className="h-8" />
         
@@ -856,7 +948,7 @@ const PDFMerged = () => {
             {file ? (
               <div className="relative" ref={pageWrapperRef}>
                 <Document
-                  file={file}
+                  file={file ? file : (pdfBytes ? { data: pdfBytes } : null)}
                   onLoadSuccess={onDocumentLoadSuccess}
                   onLoadError={(error) => {
                     console.error('PDF load error:', error);
