@@ -1,4 +1,4 @@
-import PDFViewer from '@/components/pdf/PDFViewer';
+import PDFMerged from '@/components/pdf/PDFMerged';
 import { useState, useEffect } from 'react';
 
 const PDFPage = () => {
@@ -38,7 +38,7 @@ const PDFPage = () => {
 
   return (
     <div className="h-screen">
-      <PDFViewer />
+      <PDFMerged />
     </div>
   );
 };

@@ -10,9 +10,8 @@ import Navigation from "@/components/Navigation";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 
-// Lazy load PDF pages to avoid blocking initial load
+// Lazy load PDF page to avoid blocking initial load
 const PDFPage = lazy(() => import("./pages/PDFPage"));
-const PDFEditorPage = lazy(() => import("./pages/PDFEditorPage"));
 
 // Single shared React Query client for the whole app.
 const queryClient = new QueryClient();
@@ -33,10 +32,8 @@ const App = () => (
           <Routes>
             {/* Main paint experience */}
             <Route path="/" element={<Index />} />
-            {/* PDF viewer (basic viewing with highlighting) */}
+            {/* PDF editor with all features (viewing, highlighting, drawing) */}
             <Route path="/pdf" element={<PDFPage />} />
-            {/* PDF editor (full editing with drawing tools) */}
-            <Route path="/pdf-editor" element={<PDFEditorPage />} />
             {/* Catch-all fallback for unknown routes */}
             <Route path="*" element={<NotFound />} />
           </Routes>

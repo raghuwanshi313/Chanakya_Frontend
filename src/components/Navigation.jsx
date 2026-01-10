@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { FileText, PaintBucket, Edit } from 'lucide-react';
+import { FileText, PaintBucket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const Navigation = () => {
@@ -24,16 +24,6 @@ const Navigation = () => {
           className="gap-2"
         >
           <FileText className="h-4 w-4" />
-          PDF Viewer
-        </Button>
-      </Link>
-      <Link to="/pdf-editor">
-        <Button
-          variant={location.pathname === '/pdf-editor' ? 'default' : 'outline'}
-          size="sm"
-          className="gap-2"
-        >
-          <Edit className="h-4 w-4" />
           PDF Editor
         </Button>
       </Link>
