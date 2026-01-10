@@ -54,6 +54,10 @@ const PDFMerged = () => {
   const [textSize, setTextSize] = useState(20);
   const [textInput, setTextInput] = useState('');
   const [textPosition, setTextPosition] = useState(null);
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState(null);
+  const [selectedAnnotationPage, setSelectedAnnotationPage] = useState(null);
+  const [isDraggingText, setIsDraggingText] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   
   // Text highlighting states (from PDFViewer)
   const [highlights, setHighlights] = useState([]); // Text-based highlights
@@ -282,6 +286,47 @@ const PDFMerged = () => {
     setTextPosition({ x, y });
   };
 
+  // Set text insertion position for a specific page
+  const setTextPositionForPage = (e, targetPage) => {
+    if (isHighlightMode) return;
+    const canvas = canvasRefs.current[targetPage];
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / scale;
+    const y = (e.clientY - rect.top) / scale;
+    setPageNumber(targetPage);
+
+    // If clicking on existing text, select it and enable dragging
+    if (activeTool === 'text' || activeTool === 'select') {
+      const ctx = canvas.getContext('2d');
+      const pageTexts = annotations.filter(a => a.pageNumber === targetPage && a.type === 'text');
+      // check topmost first
+      for (let i = pageTexts.length - 1; i >= 0; i--) {
+        const a = pageTexts[i];
+        ctx.font = `${a.size * scale}px Arial`;
+        const width = ctx.measureText(a.text).width;
+        const bx = a.position.x * scale;
+        const by = a.position.y * scale - a.size * scale; // approximate top by font size
+        const bw = width;
+        const bh = a.size * scale;
+        const hitX = x * scale;
+        const hitY = y * scale;
+        if (hitX >= bx && hitX <= bx + bw && hitY >= by && hitY <= by + bh) {
+          setSelectedAnnotationId(a.id);
+          setSelectedAnnotationPage(targetPage);
+          setIsDraggingText(true);
+          setDragOffset({ x: x - a.position.x, y: y - a.position.y });
+          return;
+        }
+      }
+    }
+
+    // Otherwise set insertion point for new text
+    if (activeTool === 'text') {
+      setTextPosition({ x, y });
+    }
+  };
+
   const addTextAnnotation = () => {
     if (!textInput.trim() || !textPosition) return;
     
@@ -458,6 +503,19 @@ const PDFMerged = () => {
       } else if (annotation.type === 'text') {
         ctx.font = `${annotation.size * scale}px Arial`;
         ctx.fillText(annotation.text, annotation.position.x * scale, annotation.position.y * scale);
+        // Draw selection outline if selected
+        if (selectedAnnotationId === annotation.id) {
+          const width = ctx.measureText(annotation.text).width;
+          const x = annotation.position.x * scale;
+          const height = annotation.size * scale;
+          const yTop = annotation.position.y * scale - height;
+          ctx.save();
+          ctx.strokeStyle = '#3b82f6';
+          ctx.setLineDash([4, 2]);
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x, yTop, width, height);
+          ctx.restore();
+        }
       }
     });
     
@@ -844,13 +902,23 @@ const PDFMerged = () => {
         )}
 
         {/* Text size control */}
-        {activeTool === 'text' && !isHighlightMode && (
+        {!isHighlightMode && (
           <Input
             type="number"
             min="8"
             max="96"
-            value={textSize}
-            onChange={(e) => setTextSize(Number(e.target.value) || 12)}
+            value={selectedAnnotationId ? (annotations.find(a => a.id === selectedAnnotationId)?.size || textSize) : textSize}
+            onChange={(e) => {
+              const val = Number(e.target.value) || 12;
+              if (selectedAnnotationId) {
+                setAnnotations(prev => prev.map(a => (
+                  a.id === selectedAnnotationId ? { ...a, size: val } : a
+                )));
+                if (selectedAnnotationPage) renderCanvasForPage(selectedAnnotationPage);
+              } else {
+                setTextSize(val);
+              }
+            }}
             className="w-20"
             title="Text size (px)"
           />
@@ -985,12 +1053,59 @@ const PDFMerged = () => {
                             zIndex: isHighlightMode ? 1 : 10,
                             cursor: activeTool === 'select' || isHighlightMode ? 'default' : 
                                    activeTool === 'text' ? 'text' : 'crosshair',
-                            pointerEvents: (activeTool === 'select' || isHighlightMode) ? 'none' : 'auto'
+                            pointerEvents: isHighlightMode ? 'none' : 'auto'
                           }}
-                          onMouseDown={isHighlightMode ? undefined : (e) => startDrawingOnPage(e, currentPageNum)}
-                          onMouseMove={isHighlightMode ? undefined : (e) => drawOnPage(e, currentPageNum)}
-                          onMouseUp={isHighlightMode ? undefined : stopDrawing}
-                          onMouseLeave={isHighlightMode ? undefined : stopDrawing}
+                          onMouseDown={
+                            isHighlightMode
+                              ? undefined
+                              : (e) => (
+                                  activeTool === 'text'
+                                    ? setTextPositionForPage(e, currentPageNum)
+                                    : startDrawingOnPage(e, currentPageNum)
+                                )
+                          }
+                          onMouseMove={
+                            isHighlightMode
+                              ? undefined
+                              : (e) => (
+                                  isDraggingText && selectedAnnotationPage === currentPageNum
+                                    ? (() => {
+                                        const rect = canvasRefs.current[currentPageNum].getBoundingClientRect();
+                                        const x = (e.clientX - rect.left) / scale;
+                                        const y = (e.clientY - rect.top) / scale;
+                                        setAnnotations(prev => prev.map(a => (
+                                          a.id === selectedAnnotationId
+                                            ? { ...a, position: { x: x - dragOffset.x, y: y - dragOffset.y } }
+                                            : a
+                                        )));
+                                        renderCanvasForPage(currentPageNum);
+                                      })()
+                                    : drawOnPage(e, currentPageNum)
+                                )
+                          }
+                          onMouseUp={
+                            isHighlightMode
+                              ? undefined
+                              : (e) => {
+                                  if (isDraggingText) {
+                                    setIsDraggingText(false);
+                                    saveToHistory(annotations, highlights);
+                                  } else if (activeTool !== 'text') {
+                                    stopDrawing();
+                                  }
+                                }
+                          }
+                          onMouseLeave={
+                            isHighlightMode
+                              ? undefined
+                              : (e) => {
+                                  if (isDraggingText) {
+                                    setIsDraggingText(false);
+                                  } else if (activeTool !== 'text') {
+                                    stopDrawing();
+                                  }
+                                }
+                          }
                         />
                         
                         {/* Text highlights overlay for this page */}
