@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { PDFDocument, rgb } from 'pdf-lib';
+import { PDFDocument } from 'pdf-lib';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -96,6 +96,14 @@ const PDFMerged = () => {
     const bytes = new Uint8Array(len);
     for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
     return bytes.buffer;
+  };
+
+  const hexToRgba = (hex, alpha = 1) => {
+    const normalized = hex.replace('#', '');
+    const r = parseInt(normalized.substring(0, 2), 16) || 0;
+    const g = parseInt(normalized.substring(2, 4), 16) || 0;
+    const b = parseInt(normalized.substring(4, 6), 16) || 0;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   };
 
   // Inject additional styles for text layer z-index and selection
@@ -212,7 +220,8 @@ const PDFMerged = () => {
   const startDrawingOnPage = (e, targetPage) => {
     // Don't draw in highlight mode or select mode
     if (activeTool === 'select' || activeTool === 'text' || activeTool === 'highlight' || isHighlightMode) return;
-    
+    console.log('startDrawingOnPage', { activeTool, targetPage });
+
     const canvas = canvasRefs.current[targetPage];
     if (!canvas) return;
     
@@ -239,7 +248,11 @@ const PDFMerged = () => {
   const drawOnPage = (e, targetPage) => {
     if (!isDrawing || !currentAnnotation || isHighlightMode) return;
     if (currentAnnotation.pageNumber !== targetPage) return;
-    
+    // For debugging pencil: log a few moves at start of stroke
+    if (currentAnnotation.points && currentAnnotation.points.length < 3) {
+      console.log('drawOnPage first moves', { tool: activeTool, targetPage });
+    }
+
     const canvas = canvasRefs.current[targetPage];
     if (!canvas) return;
     
@@ -289,6 +302,7 @@ const PDFMerged = () => {
   // Set text insertion position for a specific page
   const setTextPositionForPage = (e, targetPage) => {
     if (isHighlightMode) return;
+    console.log('setTextPositionForPage', { activeTool, targetPage });
     const canvas = canvasRefs.current[targetPage];
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -323,17 +337,20 @@ const PDFMerged = () => {
 
     // Otherwise set insertion point for new text
     if (activeTool === 'text') {
-      setTextPosition({ x, y });
+      setTextPosition({ x, y, pageNumber: targetPage });
     }
   };
 
   const addTextAnnotation = () => {
     if (!textInput.trim() || !textPosition) return;
+
+    const targetPage = textPosition.pageNumber || pageNumber;
+    console.log('addTextAnnotation', { targetPage, text: textInput });
     
     const annotation = {
       id: Date.now(),
       type: 'text',
-      pageNumber,
+      pageNumber: targetPage,
       color: drawColor,
       size: textSize,
       text: textInput,
@@ -437,7 +454,7 @@ const PDFMerged = () => {
   };
 
   // Render canvas annotations for a specific page
-  const renderCanvasForPage = (targetPage) => {
+  const renderCanvasForPage = useCallback((targetPage) => {
     const canvas = canvasRefs.current[targetPage];
     if (!canvas) return;
     
@@ -566,7 +583,7 @@ const PDFMerged = () => {
     }
     
     ctx.globalAlpha = 1;
-  };
+  }, [annotations, scale, currentAnnotation, isDrawing, selectedAnnotationId]);
 
   // Update all canvases when annotations change
   useEffect(() => {
@@ -583,7 +600,7 @@ const PDFMerged = () => {
         }
       }
     }
-  }, [annotations, numPages, scale, currentAnnotation, isDrawing]);
+  }, [annotations, numPages, scale, currentAnnotation, isDrawing, renderCanvasForPage]);
 
   // History management (supports both annotations and highlights)
   const saveToHistory = (newAnnotations, newHighlights) => {
@@ -643,80 +660,81 @@ const PDFMerged = () => {
         const pageAnnots = annotations.filter(a => a.pageNumber === i + 1);
         const pageHighlights = highlights.filter(h => h.pageNumber === i + 1);
         
-        // Add text highlights first (as rectangles)
-        for (const highlight of pageHighlights) {
-          const hexColor = highlight.color.replace('#', '');
-          const r = parseInt(hexColor.substr(0, 2), 16) / 255;
-          const g = parseInt(hexColor.substr(2, 2), 16) / 255;
-          const b = parseInt(hexColor.substr(4, 2), 16) / 255;
-          
-          // Simple highlight representation
-          page.drawRectangle({
-            x: 50,
-            y: height - 100 - (pageHighlights.indexOf(highlight) * 20),
-            width: 200,
-            height: 15,
-            color: rgb(r, g, b),
-            opacity: 0.5,
-          });
-        }
-        
-        // Create canvas for drawing annotations
-        if (pageAnnots.length > 0) {
+        // Create canvas for drawing highlights and annotations in page coordinates
+        if (pageAnnots.length > 0 || pageHighlights.length > 0) {
           const tempCanvas = document.createElement('canvas');
-          const pdfCanvas = document.querySelectorAll('.react-pdf__Page__canvas')[i];
-          if (pdfCanvas) {
-            tempCanvas.width = pdfCanvas.width;
-            tempCanvas.height = pdfCanvas.height;
-            const ctx = tempCanvas.getContext('2d');
+          tempCanvas.width = width;
+          tempCanvas.height = height;
+          const ctx = tempCanvas.getContext('2d');
+
+          // Draw text highlights first so ink sits above them
+          pageHighlights.forEach(highlight => {
+            ctx.fillStyle = hexToRgba(highlight.color, 0.35);
+            ctx.fillRect(
+              highlight.position.x,
+              highlight.position.y,
+              highlight.position.width,
+              highlight.position.height
+            );
+          });
+
+          // Draw annotations in creation order so eraser works as expected
+          pageAnnots.forEach(annotation => {
+            ctx.save();
+            ctx.strokeStyle = annotation.color;
+            ctx.fillStyle = annotation.color;
+            ctx.lineWidth = annotation.size;
+            ctx.globalAlpha = annotation.opacity || 1;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            if (annotation.type === 'eraser') {
+              ctx.globalCompositeOperation = 'destination-out';
+              ctx.lineWidth = (annotation.size || 3) * 2;
+            }
             
-            // Draw annotations
-            pageAnnots.forEach(annotation => {
-              ctx.strokeStyle = annotation.color;
-              ctx.fillStyle = annotation.color;
-              ctx.lineWidth = annotation.size;
-              ctx.globalAlpha = annotation.opacity || 1;
-              ctx.lineCap = 'round';
-              ctx.lineJoin = 'round';
-              
-              if (annotation.type === 'pencil') {
-                if (annotation.points.length < 2) return;
-                ctx.beginPath();
-                ctx.moveTo(annotation.points[0].x, annotation.points[0].y);
-                for (let i = 1; i < annotation.points.length; i++) {
-                  ctx.lineTo(annotation.points[i].x, annotation.points[i].y);
-                }
-                ctx.stroke();
-              } else if (annotation.type === 'rectangle' && annotation.points.endX) {
-                const w = annotation.points.endX - annotation.points.startX;
-                const h = annotation.points.endY - annotation.points.startY;
-                ctx.strokeRect(annotation.points.startX, annotation.points.startY, w, h);
-              } else if (annotation.type === 'circle' && annotation.points.endX) {
-                const radius = Math.sqrt(
-                  Math.pow(annotation.points.endX - annotation.points.startX, 2) +
-                  Math.pow(annotation.points.endY - annotation.points.startY, 2)
-                );
-                ctx.beginPath();
-                ctx.arc(annotation.points.startX, annotation.points.startY, radius, 0, 2 * Math.PI);
-                ctx.stroke();
-              } else if (annotation.type === 'text') {
-                ctx.font = `${annotation.size}px Arial`;
-                ctx.fillText(annotation.text, annotation.position.x, annotation.position.y);
+            if (annotation.type === 'pencil' || annotation.type === 'eraser') {
+              if (annotation.points.length < 2) {
+                ctx.restore();
+                return;
               }
-            });
-            
-            // Convert canvas to image and embed in PDF
-            const imageData = tempCanvas.toDataURL('image/png');
-            const imageBytes = await fetch(imageData).then(res => res.arrayBuffer());
-            const image = await pdfDoc.embedPng(imageBytes);
-            
-            page.drawImage(image, {
-              x: 0,
-              y: 0,
-              width: width,
-              height: height,
-            });
-          }
+              ctx.beginPath();
+              ctx.moveTo(annotation.points[0].x, annotation.points[0].y);
+              for (let i = 1; i < annotation.points.length; i++) {
+                ctx.lineTo(annotation.points[i].x, annotation.points[i].y);
+              }
+              ctx.stroke();
+            } else if (annotation.type === 'rectangle' && annotation.points.endX) {
+              const w = annotation.points.endX - annotation.points.startX;
+              const h = annotation.points.endY - annotation.points.startY;
+              ctx.strokeRect(annotation.points.startX, annotation.points.startY, w, h);
+            } else if (annotation.type === 'circle' && annotation.points.endX) {
+              const radius = Math.sqrt(
+                Math.pow(annotation.points.endX - annotation.points.startX, 2) +
+                Math.pow(annotation.points.endY - annotation.points.startY, 2)
+              );
+              ctx.beginPath();
+              ctx.arc(annotation.points.startX, annotation.points.startY, radius, 0, 2 * Math.PI);
+              ctx.stroke();
+            } else if (annotation.type === 'text') {
+              ctx.font = `${annotation.size}px Arial`;
+              ctx.fillText(annotation.text, annotation.position.x, annotation.position.y);
+            }
+
+            ctx.restore();
+          });
+
+          // Convert canvas to image and embed in PDF respecting page coordinates
+          const imageData = tempCanvas.toDataURL('image/png');
+          const imageBytes = await fetch(imageData).then(res => res.arrayBuffer());
+          const image = await pdfDoc.embedPng(imageBytes);
+          
+          page.drawImage(image, {
+            x: 0,
+            y: 0,
+            width: width,
+            height: height,
+          });
         }
       }
       
@@ -1067,21 +1085,21 @@ const PDFMerged = () => {
                           onMouseMove={
                             isHighlightMode
                               ? undefined
-                              : (e) => (
-                                  isDraggingText && selectedAnnotationPage === currentPageNum
-                                    ? (() => {
-                                        const rect = canvasRefs.current[currentPageNum].getBoundingClientRect();
-                                        const x = (e.clientX - rect.left) / scale;
-                                        const y = (e.clientY - rect.top) / scale;
-                                        setAnnotations(prev => prev.map(a => (
-                                          a.id === selectedAnnotationId
-                                            ? { ...a, position: { x: x - dragOffset.x, y: y - dragOffset.y } }
-                                            : a
-                                        )));
-                                        renderCanvasForPage(currentPageNum);
-                                      })()
-                                    : drawOnPage(e, currentPageNum)
-                                )
+                              : (e) => {
+                                  if (isDraggingText && selectedAnnotationPage === currentPageNum) {
+                                    const rect = canvasRefs.current[currentPageNum].getBoundingClientRect();
+                                    const x = (e.clientX - rect.left) / scale;
+                                    const y = (e.clientY - rect.top) / scale;
+                                    setAnnotations(prev => prev.map(a => (
+                                      a.id === selectedAnnotationId
+                                        ? { ...a, position: { x: x - dragOffset.x, y: y - dragOffset.y } }
+                                        : a
+                                    )));
+                                    renderCanvasForPage(currentPageNum);
+                                  } else if (isDrawing || activeTool === 'pencil' || activeTool === 'eraser' || activeTool === 'rectangle' || activeTool === 'circle') {
+                                    drawOnPage(e, currentPageNum);
+                                  }
+                                }
                           }
                           onMouseUp={
                             isHighlightMode
@@ -1090,7 +1108,7 @@ const PDFMerged = () => {
                                   if (isDraggingText) {
                                     setIsDraggingText(false);
                                     saveToHistory(annotations, highlights);
-                                  } else if (activeTool !== 'text') {
+                                  } else if (isDrawing) {
                                     stopDrawing();
                                   }
                                 }
@@ -1101,7 +1119,7 @@ const PDFMerged = () => {
                               : (e) => {
                                   if (isDraggingText) {
                                     setIsDraggingText(false);
-                                  } else if (activeTool !== 'text') {
+                                  } else if (isDrawing) {
                                     stopDrawing();
                                   }
                                 }
