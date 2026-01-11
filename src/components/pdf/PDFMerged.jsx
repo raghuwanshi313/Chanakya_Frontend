@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument } from 'pdf-lib';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,8 +32,8 @@ import {
 import { toast } from 'sonner';
 import { saveFile } from '@/services/electronService';
 
-// Configure PDF.js worker using Vite-resolved asset URL
-pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+// Configure PDF.js worker to use public worker file (works in all environments)
+pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
 const PDFMerged = () => {
   const [file, setFile] = useState(null);
