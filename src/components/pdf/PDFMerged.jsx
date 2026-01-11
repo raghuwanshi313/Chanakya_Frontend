@@ -335,7 +335,9 @@ const PDFMerged = () => {
       }
     }
 
-    // Otherwise set insertion point for new text
+    // Otherwise set insertion point for new text or clear selection
+    setSelectedAnnotationId(null);
+    setSelectedAnnotationPage(null);
     if (activeTool === 'text') {
       setTextPosition({ x, y, pageNumber: targetPage });
     }
@@ -1071,7 +1073,8 @@ const PDFMerged = () => {
                             zIndex: isHighlightMode ? 1 : 10,
                             cursor: activeTool === 'select' || isHighlightMode ? 'default' : 
                                    activeTool === 'text' ? 'text' : 'crosshair',
-                            pointerEvents: isHighlightMode ? 'none' : 'auto'
+                            pointerEvents: isHighlightMode ? 'none' : 'auto',
+                            touchAction: 'none'
                           }}
                           onMouseDown={
                             isHighlightMode
@@ -1092,7 +1095,7 @@ const PDFMerged = () => {
                                     const y = (e.clientY - rect.top) / scale;
                                     setAnnotations(prev => prev.map(a => (
                                       a.id === selectedAnnotationId
-                                        ? { ...a, position: { x: x - dragOffset.x, y: y - dragOffset.y } }
+                                        ? { ...a, position: { x: x - dragOffset.x, y: y - dragOffset.y, pageNumber: a.position.pageNumber } }
                                         : a
                                     )));
                                     renderCanvasForPage(currentPageNum);
