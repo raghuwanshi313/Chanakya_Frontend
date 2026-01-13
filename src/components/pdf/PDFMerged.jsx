@@ -586,22 +586,27 @@ const PDFMerged = () => {
     ctx.globalAlpha = 1;
   }, [annotations, scale, currentAnnotation, isDrawing, selectedAnnotationId]);
 
+  // Ensure overlay canvas matches underlying PDF page canvas size
+  const syncCanvasSizeForPage = useCallback((targetPage) => {
+    const pageEl = pageRefs.current[targetPage];
+    const canvas = canvasRefs.current[targetPage];
+    if (!pageEl || !canvas) return;
+
+    const pdfCanvas = pageEl.querySelector('.react-pdf__Page__canvas');
+    if (!pdfCanvas) return;
+
+    canvas.width = pdfCanvas.width;
+    canvas.height = pdfCanvas.height;
+    renderCanvasForPage(targetPage);
+  }, [renderCanvasForPage]);
+
   // Update all canvases when annotations change
   useEffect(() => {
     // Sync canvas sizes and render for all pages
     for (let i = 1; i <= (numPages || 0); i++) {
-      const pageEl = pageRefs.current[i];
-      const canvas = canvasRefs.current[i];
-      if (pageEl && canvas) {
-        const pdfCanvas = pageEl.querySelector('.react-pdf__Page__canvas');
-        if (pdfCanvas) {
-          canvas.width = pdfCanvas.width;
-          canvas.height = pdfCanvas.height;
-          renderCanvasForPage(i);
-        }
-      }
+      syncCanvasSizeForPage(i);
     }
-  }, [annotations, numPages, scale, currentAnnotation, isDrawing, renderCanvasForPage]);
+  }, [annotations, numPages, scale, currentAnnotation, isDrawing, syncCanvasSizeForPage]);
 
   // History management (supports both annotations and highlights)
   const saveToHistory = (newAnnotations, newHighlights) => {
@@ -1059,6 +1064,7 @@ const PDFMerged = () => {
                           scale={scale}
                           renderTextLayer={true}
                           renderAnnotationLayer={false}
+                          onRenderSuccess={() => syncCanvasSizeForPage(currentPageNum)}
                           onLoadError={error => console.error('Page load error:', error)}
                         />
                         
