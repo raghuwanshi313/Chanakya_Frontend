@@ -16,16 +16,24 @@ const PDFPage = lazy(() => import("./pages/PDFPage"));
 // Single shared React Query client for the whole app.
 const queryClient = new QueryClient();
 
-// Keep PDFPage mounted across route changes so its state (open file, annotations)
-// is preserved when navigating between Paint and PDF Editor.
-const PersistentPDFPage = () => {
+// Keep both Paint and PDF pages mounted across route changes so their state
+// (canvas drawings, open files, annotations) is preserved when navigating.
+const PersistentPages = () => {
   const location = useLocation();
   const isPDFRoute = location.pathname === "/pdf";
+  const isPaintRoute = location.pathname === "/";
 
   return (
-    <div className={isPDFRoute ? "block" : "hidden"}>
-      <PDFPage />
-    </div>
+    <>
+      {/* Paint page - always mounted, visible on / route */}
+      <div className={isPaintRoute ? "block" : "hidden"}>
+        <Index />
+      </div>
+      {/* PDF page - always mounted, visible on /pdf route */}
+      <div className={isPDFRoute ? "block" : "hidden"}>
+        <PDFPage />
+      </div>
+    </>
   );
 };
 
@@ -43,15 +51,14 @@ const App = () => (
         <Navigation />
         <Suspense fallback={<div style={{ padding: 16 }}>Loading…</div>}>
           <Routes>
-            {/* Main paint experience */}
-            <Route path="/" element={<Index />} />
-            {/* Placeholder route for PDF editor; actual editor is always mounted below */}
+            {/* Placeholder routes - actual pages are always mounted below */}
+            <Route path="/" element={<div />} />
             <Route path="/pdf" element={<div />} />
             {/* Catch-all fallback for unknown routes */}
             <Route path="*" element={<NotFound />} />
           </Routes>
-          {/* Always-mounted PDF editor, shown only on /pdf route */}
-          <PersistentPDFPage />
+          {/* Always-mounted pages, shown/hidden based on route */}
+          <PersistentPages />
         </Suspense>
         
       </BrowserRouter>
