@@ -31,15 +31,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-// Configure PDF.js worker with fallback options
-if (typeof window !== 'undefined') {
-  // Try local worker first, fallback to CDN if not available
-  const workerSrc = import.meta.env.PROD 
-    ? `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
-    : '/pdf.worker.min.mjs';
-  
-  pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
-}
+// Configure PDF.js worker - always use CDN for reliability across all environments
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const PDFMerged = () => {
   const [file, setFile] = useState(null);
