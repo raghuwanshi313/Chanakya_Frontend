@@ -31,8 +31,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-// Configure PDF.js worker - always use CDN for reliability across all environments
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+// Configure PDF.js worker to use public worker file
+pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
 const PDFMerged = () => {
   const [file, setFile] = useState(null);
