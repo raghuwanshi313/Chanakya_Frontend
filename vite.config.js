@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => ({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.ico", "robots.txt"],
+      includeAssets: ["favicon.ico", "robots.txt", "pdf.worker.min.mjs"],
       manifest: {
         name: "Chanakya - Raspberry Pi Edition",
         short_name: "Chanakya",
