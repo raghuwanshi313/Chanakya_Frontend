@@ -30,7 +30,6 @@ import {
   MousePointer
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { saveFile } from '@/services/electronService';
 
 // Configure PDF.js worker to use public worker file (works in all environments)
 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
@@ -746,29 +745,15 @@ const PDFMerged = () => {
       
       const editedPdfBytes = await pdfDoc.save();
       
-      // Use Electron save dialog if available
+      // Download the edited PDF
       const blob = new Blob([editedPdfBytes], { type: 'application/pdf' });
-      const dataURL = await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.readAsDataURL(blob);
-      });
-      
-      try {
-        const result = await saveFile(dataURL, 'edited_document.pdf');
-        if (result.success) {
-          toast.success('PDF saved successfully!');
-        }
-      } catch (err) {
-        // Fallback to browser download
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = 'edited_document.pdf';
-        link.click();
-        URL.revokeObjectURL(url);
-        toast.success('PDF downloaded successfully!');
-      }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName ? fileName.replace(/\.pdf$/i, '_edited.pdf') : 'edited_document.pdf';
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success('PDF downloaded successfully!');
       
     } catch (error) {
       console.error('Error saving PDF:', error);

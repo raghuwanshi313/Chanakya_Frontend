@@ -53,6 +53,7 @@ const App = () => (
           {/* Always-mounted PDF editor, shown only on /pdf route */}
           <PersistentPDFPage />
         </Suspense>
+        
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
