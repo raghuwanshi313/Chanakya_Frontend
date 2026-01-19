@@ -1,6 +1,7 @@
 // LOCAL STORAGE SERVICE - Browser-based storage
 // Provides helper functions to store drawings in the browser's IndexedDB
 // and to download or export them as files.
+import { PDFDocument } from 'pdf-lib';
 
 // IndexedDB database / object store configuration
 const DB_NAME = "DrawingsDB";
@@ -26,7 +27,6 @@ const initDB = () => {
         };
     });
 };
-
 /**
  * Initialize storage (local only, no API calls)
  */
@@ -323,6 +323,134 @@ export const downloadCanvasToDownloads = (canvas, fileName = null) => {
         return { success: true, fileName: name };
     } catch (error) {
         console.error("Error downloading canvas:", error);
+        return { success: false, error: error.message || error };
+    }
+};
+
+/**
+ * Convert a data URL (base64) string to a Uint8Array
+ * @param {string} dataUrl
+ * @returns {Uint8Array}
+ */
+const dataUrlToUint8 = (dataUrl) => {
+    const base64 = dataUrl.split(',')[1];
+    const binaryString = atob(base64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+};
+
+/**
+ * Download the given canvas as a single-page PDF
+ * @param {HTMLCanvasElement} canvas
+ * @param {string|null} fileName
+ * @returns {Promise<{success: boolean, fileName?: string, error?: any}>}
+ */
+export const downloadCanvasAsPDF = async (canvas, fileName = null) => {
+    try {
+        if (!canvas) {
+            return { success: false, error: 'Canvas is not available' };
+        }
+
+        const timestamp = Date.now();
+        const name = (fileName && fileName.endsWith('.pdf'))
+            ? fileName
+            : (fileName ? `${fileName}.pdf` : `drawing-${timestamp}.pdf`);
+
+        // Create PDF sized to canvas dimensions
+        const pdfDoc = await PDFDocument.create();
+        const page = pdfDoc.addPage([canvas.width, canvas.height]);
+
+        // Convert canvas image to bytes and embed
+        const pngDataUrl = canvas.toDataURL('image/png');
+        const imageBytes = dataUrlToUint8(pngDataUrl);
+        const pngImage = await pdfDoc.embedPng(imageBytes);
+
+        // Draw image to fill the whole page
+        page.drawImage(pngImage, {
+            x: 0,
+            y: 0,
+            width: canvas.width,
+            height: canvas.height,
+        });
+
+        const pdfBytes = await pdfDoc.save();
+        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        return { success: true, fileName: name };
+    } catch (error) {
+        console.error('Error downloading canvas as PDF:', error);
+        return { success: false, error: error.message || error };
+    }
+};
+
+/**
+ * Download multiple canvas pages (data URLs) as a single multi-page PDF
+ * @param {Array<{name?: string, canvasData: string}>} pages - Array of pages with data URLs
+ * @param {string|null} fileName - Desired output file name (will end with .pdf)
+ * @returns {Promise<{success: boolean, fileName?: string, error?: any}>}
+ */
+export const downloadPagesAsPDF = async (pages, fileName = null) => {
+    try {
+        if (!Array.isArray(pages) || pages.length === 0) {
+            return { success: false, error: 'No pages to export' };
+        }
+
+        const timestamp = Date.now();
+        const name = (fileName && fileName.endsWith('.pdf'))
+            ? fileName
+            : (fileName ? `${fileName}.pdf` : `drawings-${timestamp}.pdf`);
+
+        const pdfDoc = await PDFDocument.create();
+
+        for (const page of pages) {
+            const dataUrl = page?.canvasData;
+            if (!dataUrl) continue;
+
+            // Convert data URL to bytes and embed as PNG
+            const imageBytes = dataUrlToUint8(dataUrl);
+            const pngImage = await pdfDoc.embedPng(imageBytes);
+
+            const imgWidth = pngImage.width;
+            const imgHeight = pngImage.height;
+
+            // Create a PDF page matching the image dimensions
+            const pdfPage = pdfDoc.addPage([imgWidth, imgHeight]);
+            pdfPage.drawImage(pngImage, {
+                x: 0,
+                y: 0,
+                width: imgWidth,
+                height: imgHeight,
+            });
+        }
+
+        const pdfBytes = await pdfDoc.save();
+        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        return { success: true, fileName: name };
+    } catch (error) {
+        console.error('Error downloading pages as PDF:', error);
         return { success: false, error: error.message || error };
     }
 };

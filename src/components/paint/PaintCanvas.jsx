@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Toolbar } from "./Toolbar";
 import { savePage } from "./SavedPagesGallery";
 import { toast } from "sonner";
-import { downloadCanvasToDownloads } from "@/services/storageService";
+import { downloadCanvasAsPDF, downloadPagesAsPDF } from "@/services/storageService";
 
 export const PaintCanvas = () => {
   const canvasRef = useRef(null);
@@ -606,12 +606,12 @@ export const PaintCanvas = () => {
     }
   }, []);
 
-  // Download drawing to Downloads folder
-  const handleDownload = useCallback(() => {
+  // Download drawing to Downloads folder as PDF
+  const handleDownload = useCallback(async () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const result = downloadCanvasToDownloads(canvas);
+    const result = await downloadCanvasAsPDF(canvas);
     if (result.success) {
       toast.success(`Downloaded: ${result.fileName}`);
     } else {
@@ -619,30 +619,24 @@ export const PaintCanvas = () => {
     }
   }, []);
 
-  // Download all pages as separate files
-  const handleDownloadAllPages = useCallback(() => {
+  // Download all pages as a single multi-page PDF
+  const handleDownloadAllPages = useCallback(async () => {
     if (pages.length === 0) {
       toast.error("No pages to download");
       return;
     }
 
-    let downloadCount = 0;
-    pages.forEach((page, index) => {
-      if (page.canvasData) {
-        const link = document.createElement('a');
-        link.href = page.canvasData;
-        link.download = `${page.name.replace(/\s+/g, '_')}_${new Date().getTime()}.png`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        downloadCount++;
-      }
-    });
-
-    if (downloadCount > 0) {
-      toast.success(`Downloaded ${downloadCount} page(s)!`);
-    } else {
+    const pagesWithContent = pages.filter(p => !!p.canvasData);
+    if (pagesWithContent.length === 0) {
       toast.error("No pages with content to download");
+      return;
+    }
+
+    const result = await downloadPagesAsPDF(pagesWithContent, "chanakya-drawings");
+    if (result.success) {
+      toast.success(`Downloaded: ${result.fileName}`);
+    } else {
+      toast.error(result.error || "Download failed");
     }
   }, [pages]);
 
