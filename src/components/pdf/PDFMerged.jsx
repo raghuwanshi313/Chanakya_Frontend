@@ -1,1204 +1,995 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+// PDF Viewer with collaborative sharing via Yjs.
+// When a user uploads a PDF, the file data is stored in a shared Yjs map
+// so all room members instantly see and can navigate the same document.
+import { useState, useEffect, useRef, useCallback, useMemo, useContext } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { PDFDocument } from 'pdf-lib';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
-
-// Import react-pdf styles for text layer
+import { AuthContext } from '@/App';
 import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
-import { 
-  ZoomIn, 
-  ZoomOut, 
-  Download, 
-  Upload, 
-  ChevronLeft, 
-  ChevronRight,
-  Pencil,
-  Eraser,
-  Type,
-  Square,
-  Circle,
-  Highlighter,
-  Save,
-  Undo,
-  Redo,
-  Trash2,
-  FileText,
-  MousePointer
-} from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { useCollaboration } from '@/hooks/useCollaboration';
 import { toast } from 'sonner';
+import {
+  Upload,
+  ChevronLeft,
+  ChevronRight,
+  ZoomIn,
+  ZoomOut,
+  FileText,
+  Users,
+  Loader2,
+  X,
+  Pencil,
+  Trash2,
+  Undo2,
+  Redo2,
+  Hand,
+  History,
+  Eraser,
+  Menu, Sun, Moon, LogOut, PaintBucket, Copy, Check, Mic, MicOff, Video, VideoOff
+} from 'lucide-react';
+import { useTheme } from '@/context/ThemeContext';
+import { ConnectionBanner } from "@/components/shared/ConnectionBanner";
+import { Link } from 'react-router-dom';
+import { useMedia } from "@/context/MediaContext";
 
-// Configure PDF.js worker to use public worker file
+// Configure PDF.js worker from public folder
 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
+// Stable options object — MUST be outside component or memoized.
+// Recreating this inline every render destroys the PDF.js WebWorker mid-load.
+const PDF_OPTIONS = {
+  cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
+  cMapPacked: true,
+  standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
+};
+
+// Annotation drawing colors
+const ANNOTATION_COLORS = [
+  '#ef4444', '#f97316', '#eab308', '#22c55e',
+  '#3b82f6', '#8b5cf6', '#ec4899', '#000000',
+];
+
 const PDFMerged = () => {
-  const [file, setFile] = useState(null);
-  const [fileName, setFileName] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const readonly = searchParams.get('readonly') === 'true';
+  const token = useContext(AuthContext);
+
+  // Stable room ID mapped directly from URL
+  const roomId = searchParams.get('room');
+
+  const [showHistory, setShowHistory] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(false);
+  const [historyDocs, setHistoryDocs] = useState([]);
+  const [showMenu, setShowMenu] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const { theme, toggleTheme } = useTheme();
+  const { isAudioActive, toggleAudio, isVideoActive, toggleVideo } = useMedia();
+  const searchString = searchParams.toString() ? `?${searchParams.toString()}` : "";
+
+  // Generate a room if none exists, but only if we are actively viewing the PDF section
+  useEffect(() => {
+    if (!roomId && window.location.pathname === '/pdf') {
+      const newRoom = Math.random().toString(36).substring(2, 8);
+      searchParams.set('room', newRoom);
+      setSearchParams(searchParams, { replace: true });
+    }
+  }, [roomId, searchParams, setSearchParams]);
+
+  const { pdfMap, status, roomState, sendWsMessage } = useCollaboration(roomId, token);
+
+  const userId = token ? (function(){ try { return JSON.parse(atob(token.split('.')[1]))?.id } catch(e) { return null; } })() : null;
+  const isOwner = roomState?.ownerId === userId;
+  const isOwnerRef = useRef(isOwner);
+  useEffect(() => { isOwnerRef.current = isOwner; }, [isOwner]);
+  const isHost = roomState?.hostId === userId;
+  const lastScrollBroadcastRef = useRef(0);
+
+  // PDF state
+  const [pdfDataUrl, setPdfDataUrl] = useState(null);
+  const pdfDataUrlRef = useRef(null); // Always-fresh ref for use in Yjs observer (avoids stale closures)
   const [numPages, setNumPages] = useState(null);
-  const [pageNumber, setPageNumber] = useState(1);
+  const numPagesRef = useRef(null); // stable ref for observer closures
   const [scale, setScale] = useState(1.0);
-  const [pdfBytes, setPdfBytes] = useState(null);
-  
-  // Drawing states (from PDFEditor)
-  const [activeTool, setActiveTool] = useState('select');
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [annotations, setAnnotations] = useState([]); // Canvas-based annotations
-  const [currentAnnotation, setCurrentAnnotation] = useState(null);
-  const [drawColor, setDrawColor] = useState('#FF0000');
-  const [drawSize, setDrawSize] = useState(3);
-  const [textSize, setTextSize] = useState(20);
-  const [textInput, setTextInput] = useState('');
-  const [textPosition, setTextPosition] = useState(null);
-  const [selectedAnnotationId, setSelectedAnnotationId] = useState(null);
-  const [selectedAnnotationPage, setSelectedAnnotationPage] = useState(null);
-  const [isDraggingText, setIsDraggingText] = useState(false);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  
-  // Text highlighting states (from PDFViewer)
-  const [highlights, setHighlights] = useState([]); // Text-based highlights
-  const [isHighlightMode, setIsHighlightMode] = useState(false);
-  const [highlightColor, setHighlightColor] = useState('#FFFF00');
-  
-  // History for undo/redo
-  const [history, setHistory] = useState([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  
-  const canvasRef = useRef(null);
+  const [loading, setLoading] = useState(false);
+  const [pdfFileName, setPdfFileName] = useState('');
+  const [currentPage, _setCurrentPage] = useState(1);
+  const currentPageRef = useRef(1);
+  const setCurrentPage = useCallback((val) => {
+    const newVal = typeof val === 'function' ? val(currentPageRef.current) : val;
+    currentPageRef.current = newVal;
+    _setCurrentPage(newVal);
+  }, []);
+
+  // Annotation state
+  const [annotating, setAnnotating] = useState(false);
+  const [annotationColor, setAnnotationColor] = useState('#ef4444');
+  const [annotationSize, setAnnotationSize] = useState(3);
+  const [isErasing, setIsErasing] = useState(false);
+  const canvasRefs = useRef({});
+  const isDrawingRef = useRef(false);
+  const lastPointRef = useRef(null);
+  const activeCanvasPageRef = useRef(1);
+  const annotationHistoryRef = useRef([]);   // stack of {page, data} for undo
+  const redoHistoryRef = useRef([]);         // stack of {page, data} for redo
+  const pageContainerRef = useRef(null);
+  const scrollContainerRef = useRef(null);
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef({ x: 0, y: 0, sL: 0, sT: 0 });
+
   const fileInputRef = useRef(null);
-  const containerRef = useRef(null);
-  const pageWrapperRef = useRef(null); // Outer wrapper
-  const pageContainerRef = useRef(null); // The positioned page container we overlay on
-  const pageRefs = useRef({}); // Refs for each page for scrolling
-  const canvasRefs = useRef({}); // Canvas refs for each page
+  const isSyncingRef = useRef(false);  // prevent echo loops
+  const lastRemoteCanvasOverlayRef = useRef({});
 
-  // --- Persistence helpers (sessionStorage) ---
-  const STORAGE_KEY = 'pdfEditorState';
-
-  const arrayBufferToBase64 = (buffer) => {
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.subarray(i, i + chunkSize);
-      binary += String.fromCharCode.apply(null, chunk);
-    }
-    return btoa(binary);
-  };
-
-  const base64ToArrayBuffer = (base64) => {
-    const binary = atob(base64);
-    const len = binary.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes.buffer;
-  };
-
-  const hexToRgba = (hex, alpha = 1) => {
-    const normalized = hex.replace('#', '');
-    const r = parseInt(normalized.substring(0, 2), 16) || 0;
-    const g = parseInt(normalized.substring(2, 4), 16) || 0;
-    const b = parseInt(normalized.substring(4, 6), 16) || 0;
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  };
-
-  // Inject additional styles for text layer z-index and selection
+  // Block all scroll input (wheel, touch, scrollbar drag) for non-owners
   useEffect(() => {
-    const styleId = 'react-pdf-custom-styles';
-    if (!document.getElementById(styleId)) {
-      const style = document.createElement('style');
-      style.id = styleId;
-      style.textContent = `
-        .react-pdf__Page__textContent {
-          z-index: 2;
-          user-select: text;
-          -webkit-user-select: text;
-        }
-        .react-pdf__Page__textContent span {
-          user-select: text;
-          -webkit-user-select: text;
-        }
-        .react-pdf__Page__textContent span::selection {
-          background: rgba(0, 123, 255, 0.4);
-        }
-        .react-pdf__Page__canvas {
-          z-index: 1;
-        }
-      `;
-      document.head.appendChild(style);
-    }
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const blockScroll = (e) => {
+      if (!isOwnerRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    // passive: false is required to allow preventDefault on wheel/touch events
+    el.addEventListener('wheel', blockScroll, { passive: false });
+    el.addEventListener('touchmove', blockScroll, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', blockScroll);
+      el.removeEventListener('touchmove', blockScroll);
+    };
   }, []);
 
-  // Load PDF file
-  const onFileChange = async (event) => {
-    const selectedFile = event.target.files[0];
-    if (selectedFile && selectedFile.type === 'application/pdf') {
-      setFile(selectedFile);
-      setFileName(selectedFile.name);
-      
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const bytes = e.target.result;
-        setPdfBytes(bytes);
-        // Persist to sessionStorage
-        try {
-          const base64 = arrayBufferToBase64(bytes);
-          const snapshot = {
-            fileName: selectedFile.name,
-            pdfBytes: base64,
-            pageNumber,
-            scale,
-            annotations,
-            highlights,
-          };
-          sessionStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-        } catch {}
-      };
-      reader.readAsArrayBuffer(selectedFile);
-      
-      toast.success('PDF loaded successfully');
-    } else {
-      toast.error('Please select a valid PDF file');
+  // ─── Yjs observation: react to remote changes ───────────────────
+  useEffect(() => {
+    if (!pdfMap) return;
+
+    // Initial load from Yjs state (e.g. late joiner)
+    const existingPdf = pdfMap.get('pdfData');
+    const existingName = pdfMap.get('fileName');
+    const existingPage = pdfMap.get('currentPage') || 1;
+    if (existingPage !== currentPageRef.current) setCurrentPage(existingPage);
+
+    if (existingPdf && !pdfDataUrlRef.current) {
+      setPdfDataUrl(existingPdf);
+      pdfDataUrlRef.current = existingPdf;
+      if (existingName) setPdfFileName(existingName);
     }
-  };
-
-  const onDocumentLoadSuccess = ({ numPages }) => {
-    setNumPages(numPages);
-    // Keep current page if restored
-    if (!pageNumber || pageNumber < 1) setPageNumber(1);
-  };
-
-  // Restore state from sessionStorage on mount
-  useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const saved = JSON.parse(raw);
-        if (saved.pdfBytes) {
-          const bytes = base64ToArrayBuffer(saved.pdfBytes);
-          setPdfBytes(bytes);
+    
+    const applyRemoteCanvas = (c, remoteCanvas) => {
+        if (!c) return;
+        const ctx = c.getContext('2d');
+        if (!remoteCanvas) {
+            ctx.clearRect(0, 0, c.width, c.height);
+        } else {
+            const img = new Image();
+            img.onload = () => {
+                ctx.clearRect(0, 0, c.width, c.height);
+                ctx.drawImage(img, 0, 0);
+            };
+            img.src = remoteCanvas;
         }
-        if (saved.fileName) setFileName(saved.fileName);
-        if (typeof saved.pageNumber === 'number') setPageNumber(saved.pageNumber);
-        if (typeof saved.scale === 'number') setScale(saved.scale);
-        if (Array.isArray(saved.annotations)) setAnnotations(saved.annotations);
-        if (Array.isArray(saved.highlights)) setHighlights(saved.highlights);
-        toast.info('Restored PDF editor state');
-      }
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Persist key state changes
-  useEffect(() => {
-    try {
-      if (!pdfBytes) return;
-      const base64 = arrayBufferToBase64(pdfBytes);
-      const snapshot = {
-        fileName,
-        pdfBytes: base64,
-        pageNumber,
-        scale,
-        annotations,
-        highlights,
-      };
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-    } catch {}
-  }, [pdfBytes, fileName, pageNumber, scale, annotations, highlights]);
-
-  // Navigation
-  const previousPage = () => setPageNumber(prev => Math.max(1, prev - 1));
-  const nextPage = () => setPageNumber(prev => Math.min(numPages, prev + 1));
-  const zoomIn = () => setScale(prev => Math.min(prev + 0.2, 3.0));
-  const zoomOut = () => setScale(prev => Math.max(prev - 0.2, 0.5));
-
-  // Drawing functions for multi-page support
-  const startDrawingOnPage = (e, targetPage) => {
-    // Don't draw in highlight mode or select mode
-    if (activeTool === 'select' || activeTool === 'text' || activeTool === 'highlight' || isHighlightMode) return;
-    console.log('startDrawingOnPage', { activeTool, targetPage });
-
-    const canvas = canvasRefs.current[targetPage];
-    if (!canvas) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / scale;
-    const y = (e.clientY - rect.top) / scale;
-    
-    setIsDrawing(true);
-    setPageNumber(targetPage);
-    
-    const annotation = {
-      id: Date.now(),
-      type: activeTool,
-      pageNumber: targetPage,
-      color: drawColor,
-      size: drawSize,
-      points: activeTool === 'pencil' || activeTool === 'eraser' ? [{ x, y }] : { startX: x, startY: y },
-      opacity: 1
     };
     
-    setCurrentAnnotation(annotation);
-  };
+    // We rely on the observer firing for the initial canvas paints
 
-  const drawOnPage = (e, targetPage) => {
-    if (!isDrawing || !currentAnnotation || isHighlightMode) return;
-    if (currentAnnotation.pageNumber !== targetPage) return;
-    // For debugging pencil: log a few moves at start of stroke
-    if (currentAnnotation.points && currentAnnotation.points.length < 3) {
-      console.log('drawOnPage first moves', { tool: activeTool, targetPage });
-    }
+    const observer = (event) => {
+      // Don't use isSyncingRef guard here — it was blocking remote updates.
+      // Instead we do self-echo detection by comparing data strings.
 
-    const canvas = canvasRefs.current[targetPage];
-    if (!canvas) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / scale;
-    const y = (e.clientY - rect.top) / scale;
-    
-    if (activeTool === 'pencil' || activeTool === 'eraser') {
-      setCurrentAnnotation(prev => ({
-        ...prev,
-        points: [...prev.points, { x, y }]
-      }));
-    } else {
-      setCurrentAnnotation(prev => ({
-        ...prev,
-        points: { ...prev.points, endX: x, endY: y }
-      }));
-    }
-    
-    renderCanvasForPage(targetPage);
-  };
+      const remotePdf = pdfMap.get('pdfData');
+      const remoteName = pdfMap.get('fileName');
 
-  const stopDrawing = () => {
-    if (isDrawing && currentAnnotation) {
-      const newAnnotations = [...annotations, currentAnnotation];
-      setAnnotations(newAnnotations);
-      saveToHistory(newAnnotations, highlights);
-      setCurrentAnnotation(null);
-    }
-    setIsDrawing(false);
-  };
-
-  // Handle text tool
-  const handleCanvasClick = (e) => {
-    if (activeTool !== 'text') return;
-    
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / scale;
-    const y = (e.clientY - rect.top) / scale;
-    
-    setTextPosition({ x, y });
-  };
-
-  // Set text insertion position for a specific page
-  const setTextPositionForPage = (e, targetPage) => {
-    if (isHighlightMode) return;
-    console.log('setTextPositionForPage', { activeTool, targetPage });
-    const canvas = canvasRefs.current[targetPage];
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / scale;
-    const y = (e.clientY - rect.top) / scale;
-    setPageNumber(targetPage);
-
-    // If clicking on existing text, select it and enable dragging
-    if (activeTool === 'text' || activeTool === 'select') {
-      const ctx = canvas.getContext('2d');
-      const pageTexts = annotations.filter(a => a.pageNumber === targetPage && a.type === 'text');
-      // check topmost first
-      for (let i = pageTexts.length - 1; i >= 0; i--) {
-        const a = pageTexts[i];
-        ctx.font = `${a.size * scale}px Arial`;
-        const width = ctx.measureText(a.text).width;
-        const bx = a.position.x * scale;
-        const by = a.position.y * scale - a.size * scale; // approximate top by font size
-        const bw = width;
-        const bh = a.size * scale;
-        const hitX = x * scale;
-        const hitY = y * scale;
-        if (hitX >= bx && hitX <= bx + bw && hitY >= by && hitY <= by + bh) {
-          setSelectedAnnotationId(a.id);
-          setSelectedAnnotationPage(targetPage);
-          setIsDraggingText(true);
-          setDragOffset({ x: x - a.position.x, y: y - a.position.y });
-          return;
-        }
+      if (remotePdf && remotePdf !== pdfDataUrlRef.current) {
+        setPdfDataUrl(remotePdf);
+        pdfDataUrlRef.current = remotePdf;
       }
-    }
-
-    // Otherwise set insertion point for new text or clear selection
-    setSelectedAnnotationId(null);
-    setSelectedAnnotationPage(null);
-    if (activeTool === 'text') {
-      setTextPosition({ x, y, pageNumber: targetPage });
-    }
-  };
-
-  const addTextAnnotation = () => {
-    if (!textInput.trim() || !textPosition) return;
-
-    const targetPage = textPosition.pageNumber || pageNumber;
-    console.log('addTextAnnotation', { targetPage, text: textInput });
-    
-    const annotation = {
-      id: Date.now(),
-      type: 'text',
-      pageNumber: targetPage,
-      color: drawColor,
-      size: textSize,
-      text: textInput,
-      position: textPosition
-    };
-    
-    const newAnnotations = [...annotations, annotation];
-    setAnnotations(newAnnotations);
-    saveToHistory(newAnnotations, highlights);
-    
-    setTextInput('');
-    setTextPosition(null);
-    toast.success('Text added');
-  };
-
-  // Text highlighting (from PDFViewer)
-  const handleTextSelect = () => {
-    console.log('handleTextSelect called, isHighlightMode:', isHighlightMode);
-    
-    if (!isHighlightMode) return;
-    
-    const selection = window.getSelection();
-    const text = selection.toString().trim();
-    
-    console.log('Selected text:', text);
-    
-    if (!text || text.length === 0) return;
-    
-    try {
-      if (selection.rangeCount === 0) return;
+      if (remoteName) {
+        setPdfFileName(remoteName);
+      }
       
-      const range = selection.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-
-      // Find which page the selection is on
-      let targetPageNum = 1;
-      let targetPageCanvas = null;
-      
-      for (let i = 1; i <= numPages; i++) {
-        const pageEl = pageRefs.current[i];
-        if (pageEl) {
-          const pageRect = pageEl.getBoundingClientRect();
-          // Check if selection is within this page
-          if (rect.top >= pageRect.top && rect.bottom <= pageRect.bottom + 50) {
-            targetPageNum = i;
-            targetPageCanvas = pageEl.querySelector('.react-pdf__Page__canvas');
-            break;
+      // B-5: Only process canvasOverlay keys that actually changed in this transaction.
+      // This removes the hardcoded 50-page ceiling and avoids wasteful lookups.
+      if (event && event.keysChanged) {
+        event.keysChanged.forEach(key => {
+          if (!key.startsWith('canvasOverlay_')) return;
+          const i = parseInt(key.replace('canvasOverlay_', ''), 10);
+          if (!i || isNaN(i)) return;
+          const rc = pdfMap.get(key);
+          if (rc !== undefined && rc !== lastRemoteCanvasOverlayRef.current[i]) {
+            lastRemoteCanvasOverlayRef.current[i] = rc;
+            const c = canvasRefs.current[i];
+            if (c && c.toDataURL('image/webp', 0.6) === rc) return; // self-echo
+            if (c) {
+              applyRemoteCanvas(c, rc);
+            } else {
+              // Canvas not mounted yet (page not in viewport) — retry after paint
+              const retryId = setTimeout(() => {
+                if (canvasRefs.current[i]) applyRemoteCanvas(canvasRefs.current[i], rc);
+              }, 300);
+              // No need to clear — one-shot
+              void retryId;
+            }
           }
-        }
+        });
       }
-      
-      if (!targetPageCanvas) return;
-      
-      const pageRect = targetPageCanvas.getBoundingClientRect();
 
-      if (rect.width < 5 || rect.height < 5) return;
-
-      // Store highlight position relative to the page at scale 1.0
-      // This way highlights stay in correct position when zooming
-      const highlight = {
-        id: Date.now() + Math.random(),
-        text,
-        pageNumber: targetPageNum,
-        color: highlightColor,
-        position: {
-          x: (rect.x - pageRect.x) / scale,
-          y: (rect.y - pageRect.y) / scale,
-          width: rect.width / scale,
-          height: rect.height / scale,
-        },
-      };
-      
-      const newHighlights = [...highlights, highlight];
-      setHighlights(newHighlights);
-      saveToHistory(annotations, newHighlights);
-      toast.success(`Text highlighted on page ${targetPageNum}!`);
-      
-      selection.removeAllRanges();
-    } catch (error) {
-      console.error('Error highlighting text:', error);
-    }
-  };
-
-  const toggleHighlightMode = () => {
-    const newMode = !isHighlightMode;
-    setIsHighlightMode(newMode);
-    if (newMode) {
-      setActiveTool('highlight');
-      toast.info('Text highlight mode enabled - select text to highlight');
-    } else {
-      setActiveTool('select');
-      toast.info('Text highlight mode disabled');
-    }
-  };
-
-  const removeHighlight = (id) => {
-    const newHighlights = highlights.filter(h => h.id !== id);
-    setHighlights(newHighlights);
-    saveToHistory(annotations, newHighlights);
-    toast.info('Highlight removed');
-  };
-
-  // Render canvas annotations for a specific page
-  const renderCanvasForPage = useCallback((targetPage) => {
-    const canvas = canvasRefs.current[targetPage];
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Render all annotations for this page
-    const pageAnnotations = annotations.filter(a => a.pageNumber === targetPage);
-    
-    pageAnnotations.forEach(annotation => {
-      ctx.strokeStyle = annotation.color;
-      ctx.fillStyle = annotation.color;
-      ctx.lineWidth = annotation.size;
-      ctx.globalAlpha = annotation.opacity || 1;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      
-      if (annotation.type === 'pencil' || annotation.type === 'eraser') {
-        if (annotation.points.length < 2) return;
-        
-        ctx.beginPath();
-        ctx.moveTo(annotation.points[0].x * scale, annotation.points[0].y * scale);
-        
-        for (let i = 1; i < annotation.points.length; i++) {
-          ctx.lineTo(annotation.points[i].x * scale, annotation.points[i].y * scale);
-        }
-        
-        if (annotation.type === 'eraser') {
-          ctx.globalCompositeOperation = 'destination-out';
-          ctx.lineWidth = annotation.size * 2;
-        }
-        
-        ctx.stroke();
-        ctx.globalCompositeOperation = 'source-over';
-        
-      } else if (annotation.type === 'rectangle') {
-        if (!annotation.points.endX) return;
-        const width = annotation.points.endX - annotation.points.startX;
-        const height = annotation.points.endY - annotation.points.startY;
-        ctx.strokeRect(
-          annotation.points.startX * scale,
-          annotation.points.startY * scale,
-          width * scale,
-          height * scale
-        );
-        
-      } else if (annotation.type === 'circle') {
-        if (!annotation.points.endX) return;
-        const radius = Math.sqrt(
-          Math.pow(annotation.points.endX - annotation.points.startX, 2) +
-          Math.pow(annotation.points.endY - annotation.points.startY, 2)
-        );
-        ctx.beginPath();
-        ctx.arc(
-          annotation.points.startX * scale,
-          annotation.points.startY * scale,
-          radius * scale,
-          0,
-          2 * Math.PI
-        );
-        ctx.stroke();
-        
-      } else if (annotation.type === 'text') {
-        ctx.font = `${annotation.size * scale}px Arial`;
-        ctx.fillText(annotation.text, annotation.position.x * scale, annotation.position.y * scale);
-        // Draw selection outline if selected
-        if (selectedAnnotationId === annotation.id) {
-          const width = ctx.measureText(annotation.text).width;
-          const x = annotation.position.x * scale;
-          const height = annotation.size * scale;
-          const yTop = annotation.position.y * scale - height;
-          ctx.save();
-          ctx.strokeStyle = '#3b82f6';
-          ctx.setLineDash([4, 2]);
-          ctx.lineWidth = 1;
-          ctx.strokeRect(x, yTop, width, height);
-          ctx.restore();
-        }
+      // Detect explicit remote PDF removal: only clear if the 'pdfData' key
+      // was actually deleted in THIS transaction (not just missing on first load).
+      if (event && event.keysChanged && event.keysChanged.has('pdfData') && !remotePdf) {
+        setPdfDataUrl(null);
+        setNumPages(null);
+        numPagesRef.current = null;
+        setPdfFileName('');
       }
-    });
-    
-    // Render current annotation being drawn on this page
-    if (currentAnnotation && isDrawing && currentAnnotation.pageNumber === targetPage) {
-      ctx.strokeStyle = currentAnnotation.color;
-      ctx.fillStyle = currentAnnotation.color;
-      ctx.lineWidth = currentAnnotation.size;
-      ctx.globalAlpha = currentAnnotation.opacity || 1;
-      
-      if (currentAnnotation.type === 'pencil') {
-        if (currentAnnotation.points.length < 2) return;
-        
-        ctx.beginPath();
-        ctx.moveTo(currentAnnotation.points[0].x * scale, currentAnnotation.points[0].y * scale);
-        
-        for (let i = 1; i < currentAnnotation.points.length; i++) {
-          ctx.lineTo(currentAnnotation.points[i].x * scale, currentAnnotation.points[i].y * scale);
-        }
-        
-        ctx.stroke();
-      } else if (currentAnnotation.points.endX) {
-        if (currentAnnotation.type === 'rectangle') {
-          const width = currentAnnotation.points.endX - currentAnnotation.points.startX;
-          const height = currentAnnotation.points.endY - currentAnnotation.points.startY;
-          ctx.strokeRect(
-            currentAnnotation.points.startX * scale,
-            currentAnnotation.points.startY * scale,
-            width * scale,
-            height * scale
-          );
-        } else if (currentAnnotation.type === 'circle') {
-          const radius = Math.sqrt(
-            Math.pow(currentAnnotation.points.endX - currentAnnotation.points.startX, 2) +
-            Math.pow(currentAnnotation.points.endY - currentAnnotation.points.startY, 2)
-          );
-          ctx.beginPath();
-          ctx.arc(
-            currentAnnotation.points.startX * scale,
-            currentAnnotation.points.startY * scale,
-            radius * scale,
-            0,
-            2 * Math.PI
-          );
-          ctx.stroke();
-        }
+
+      // Sync scroll for non-owners (overflow is hidden, but direct assignment still works)
+      if (!isOwnerRef.current && scrollContainerRef.current) {
+          const remoteTop = pdfMap.get('scrollTop');
+          const remoteLeft = pdfMap.get('scrollLeft');
+          if (remoteTop !== undefined) {
+              scrollContainerRef.current.scrollTop = remoteTop;
+              scrollContainerRef.current.scrollLeft = remoteLeft || 0;
+          }
       }
-    }
+    };
     
-    ctx.globalAlpha = 1;
-  }, [annotations, scale, currentAnnotation, isDrawing, selectedAnnotationId]);
+    pdfMap.observe(observer);
 
-  // Ensure overlay canvas matches underlying PDF page canvas size
-  const syncCanvasSizeForPage = useCallback((targetPage) => {
-    const pageEl = pageRefs.current[targetPage];
-    const canvas = canvasRefs.current[targetPage];
-    if (!pageEl || !canvas) return;
+    return () => pdfMap.unobserve(observer);
+  }, [pdfMap]);  // intentionally only depend on pdfMap reference
 
-    const pdfCanvas = pageEl.querySelector('.react-pdf__Page__canvas');
-    if (!pdfCanvas) return;
+  // ─── Upload handler ─────────────────────────────────────────────
+  const handleFileUpload = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    canvas.width = pdfCanvas.width;
-    canvas.height = pdfCanvas.height;
-    renderCanvasForPage(targetPage);
-  }, [renderCanvasForPage]);
-
-  // Update all canvases when annotations change
-  useEffect(() => {
-    // Sync canvas sizes and render for all pages
-    for (let i = 1; i <= (numPages || 0); i++) {
-      syncCanvasSizeForPage(i);
-    }
-  }, [annotations, numPages, scale, currentAnnotation, isDrawing, syncCanvasSizeForPage]);
-
-  // History management (supports both annotations and highlights)
-  const saveToHistory = (newAnnotations, newHighlights) => {
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push({ annotations: newAnnotations, highlights: newHighlights });
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-  };
-
-  const undo = () => {
-    if (historyIndex > 0) {
-      const prevState = history[historyIndex - 1];
-      setHistoryIndex(historyIndex - 1);
-      setAnnotations(prevState.annotations);
-      setHighlights(prevState.highlights);
-    } else if (historyIndex === 0) {
-      setAnnotations([]);
-      setHighlights([]);
-      setHistoryIndex(-1);
-    }
-  };
-
-  const redo = () => {
-    if (historyIndex < history.length - 1) {
-      const nextState = history[historyIndex + 1];
-      setHistoryIndex(historyIndex + 1);
-      setAnnotations(nextState.annotations);
-      setHighlights(nextState.highlights);
-    }
-  };
-
-  const clearAllForPage = () => {
-    const pageAnnotations = annotations.filter(a => a.pageNumber !== pageNumber);
-    const pageHighlights = highlights.filter(h => h.pageNumber !== pageNumber);
-    setAnnotations(pageAnnotations);
-    setHighlights(pageHighlights);
-    saveToHistory(pageAnnotations, pageHighlights);
-    toast.success('All edits cleared for this page');
-  };
-
-  // Save complete edited PDF with both annotations and highlights
-  const saveEditedPDF = async () => {
-    if (!pdfBytes) {
-      toast.error('No PDF loaded');
+    if (file.type !== 'application/pdf') {
+      toast.error('Please select a valid PDF file');
       return;
     }
 
-    try {
-      toast.info('Generating edited PDF...');
-      
-      const pdfDoc = await PDFDocument.load(pdfBytes);
-      
-      // Process each page
-      for (let i = 0; i < numPages; i++) {
-        const page = pdfDoc.getPage(i);
-        const { width, height } = page.getSize();
-        const pageAnnots = annotations.filter(a => a.pageNumber === i + 1);
-        const pageHighlights = highlights.filter(h => h.pageNumber === i + 1);
-        
-        // Create canvas for drawing highlights and annotations in page coordinates
-        if (pageAnnots.length > 0 || pageHighlights.length > 0) {
-          const tempCanvas = document.createElement('canvas');
-          tempCanvas.width = width;
-          tempCanvas.height = height;
-          const ctx = tempCanvas.getContext('2d');
+    // 15 MB limit
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('PDF must be smaller than 15 MB');
+      return;
+    }
 
-          // Draw text highlights first so ink sits above them
-          pageHighlights.forEach(highlight => {
-            ctx.fillStyle = hexToRgba(highlight.color, 0.35);
-            ctx.fillRect(
-              highlight.position.x,
-              highlight.position.y,
-              highlight.position.width,
-              highlight.position.height
-            );
-          });
+    setLoading(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result;
+      if (typeof dataUrl !== 'string') return;
 
-          // Draw annotations in creation order so eraser works as expected
-          pageAnnots.forEach(annotation => {
-            ctx.save();
-            ctx.strokeStyle = annotation.color;
-            ctx.fillStyle = annotation.color;
-            ctx.lineWidth = annotation.size;
-            ctx.globalAlpha = annotation.opacity || 1;
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
+      setPdfDataUrl(dataUrl);
+      setPdfFileName(file.name);
 
-            if (annotation.type === 'eraser') {
-              ctx.globalCompositeOperation = 'destination-out';
-              ctx.lineWidth = (annotation.size || 3) * 2;
-            }
-            
-            if (annotation.type === 'pencil' || annotation.type === 'eraser') {
-              if (annotation.points.length < 2) {
-                ctx.restore();
-                return;
-              }
-              ctx.beginPath();
-              ctx.moveTo(annotation.points[0].x, annotation.points[0].y);
-              for (let i = 1; i < annotation.points.length; i++) {
-                ctx.lineTo(annotation.points[i].x, annotation.points[i].y);
-              }
-              ctx.stroke();
-            } else if (annotation.type === 'rectangle' && annotation.points.endX) {
-              const w = annotation.points.endX - annotation.points.startX;
-              const h = annotation.points.endY - annotation.points.startY;
-              ctx.strokeRect(annotation.points.startX, annotation.points.startY, w, h);
-            } else if (annotation.type === 'circle' && annotation.points.endX) {
-              const radius = Math.sqrt(
-                Math.pow(annotation.points.endX - annotation.points.startX, 2) +
-                Math.pow(annotation.points.endY - annotation.points.startY, 2)
-              );
-              ctx.beginPath();
-              ctx.arc(annotation.points.startX, annotation.points.startY, radius, 0, 2 * Math.PI);
-              ctx.stroke();
-            } else if (annotation.type === 'text') {
-              ctx.font = `${annotation.size}px Arial`;
-              ctx.fillText(annotation.text, annotation.position.x, annotation.position.y);
-            }
-
-            ctx.restore();
-          });
-
-          // Convert canvas to image and embed in PDF respecting page coordinates
-          const imageData = tempCanvas.toDataURL('image/png');
-          const imageBytes = await fetch(imageData).then(res => res.arrayBuffer());
-          const image = await pdfDoc.embedPng(imageBytes);
-          
-          page.drawImage(image, {
-            x: 0,
-            y: 0,
-            width: width,
-            height: height,
-          });
+      // Push to Yjs so all room members get it
+      if (pdfMap) {
+        isSyncingRef.current = true;
+        try {
+          pdfMap.set('pdfData', dataUrl);
+          pdfMap.set('fileName', file.name);
+        } catch (e) {
+          console.error('[Vani] handleFileUpload Yjs error:', e);
+        } finally {
+          isSyncingRef.current = false;
         }
       }
-      
-      const editedPdfBytes = await pdfDoc.save();
-      
-      // Download the edited PDF
-      const blob = new Blob([editedPdfBytes], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = fileName ? fileName.replace(/\.pdf$/i, '_edited.pdf') : 'edited_document.pdf';
-      link.click();
-      URL.revokeObjectURL(url);
-      toast.success('PDF downloaded successfully!');
-      
-    } catch (error) {
-      console.error('Error saving PDF:', error);
-      toast.error('Failed to save PDF: ' + error.message);
+
+      // Record to Session History Database
+      if (token && roomId) {
+        const backendUrl = import.meta.env?.VITE_BACKEND_URL || 'https://vanibackend-production.up.railway.app';
+        fetch(`${backendUrl}/api/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ roomId, pdfFileName: file.name })
+        }).catch(err => console.error("History logging error:", err));
+      }
+
+      setLoading(false);
+      toast.success(`Uploaded: ${file.name}`);
+    };
+    reader.onerror = () => {
+      setLoading(false);
+      toast.error('Failed to read PDF file');
+    };
+    reader.readAsDataURL(file);
+
+    // Reset input so the same file can be re-selected
+    e.target.value = '';
+  }, [pdfMap]);
+
+  // ─── PDF loaded callback ────────────────────────────────────────
+  const onDocumentLoadSuccess = ({ numPages: n }) => {
+    setNumPages(n);
+    numPagesRef.current = n;
+    setLoading(false);
+  };
+
+  // ─── Page Navigation ───────────────────────────────────────────
+  const changePage = useCallback((offset) => {
+    if (!isOwnerRef.current) {
+       toast.error("Only the owner can scroll or change pages");
+       return;
+    }
+    setCurrentPage(prev => {
+      const newPage = Math.max(1, Math.min(prev + offset, numPages || 1));
+      if (newPage !== prev) {
+        if (pdfMap) {
+          isSyncingRef.current = true;
+          try {
+            pdfMap.set('currentPage', newPage);
+          } catch (e) {
+            console.error('[Vani] changePage Yjs error:', e);
+          } finally {
+            isSyncingRef.current = false;
+          }
+        }
+        // Native scrolling has eliminated the need to swap static overlays here. 
+        // Canvases are now persisted on the DOM alongside their respective pages.
+      }
+      return newPage;
+    });
+  }, [numPages, pdfMap]);
+
+  const prevPage = () => changePage(-1);
+  const nextPage = () => changePage(1);
+
+  // ─── Zoom ──────────────────────────────────────────────────────
+  const zoomIn = () => {
+      if (!isOwnerRef.current) return toast.error("Only the owner can zoom");
+      setScale((s) => Math.min(s + 0.25, 3));
+  };
+  const zoomOut = () => {
+      if (!isOwnerRef.current) return toast.error("Only the owner can zoom");
+      setScale((s) => Math.max(s - 0.25, 0.5));
+  };
+
+  // ─── Close / remove PDF ────────────────────────────────────────
+  const closePdf = useCallback(() => {
+    setPdfDataUrl(null);
+    setNumPages(null);
+    setPdfFileName('');
+    if (pdfMap) {
+      isSyncingRef.current = true;
+      try {
+        pdfMap.delete('pdfData');
+        pdfMap.delete('fileName');
+        pdfMap.delete('currentPage');
+      } catch (e) {
+        console.error('[Vani] closePdf Yjs error:', e);
+      } finally {
+        isSyncingRef.current = false;
+      }
+    }
+    toast('PDF removed');
+  }, [pdfMap]);
+
+  // ─── Annotation helpers ─────────────────────────────────────────
+  const saveAnnotationSnapshot = (page) => {
+    const c = canvasRefs.current[page];
+    if (!c) return;
+    annotationHistoryRef.current.push({ page, data: c.toDataURL() });
+    redoHistoryRef.current = []; // Clear redo stack eagerly
+  };
+
+  const undoAnnotation = () => {
+    if (annotationHistoryRef.current.length === 0) return;
+    const { page, data } = annotationHistoryRef.current.pop();
+    const c = canvasRefs.current[page];
+    if (!c) return;
+    
+    // Save current canvas to redo stack BEFORE reverting
+    redoHistoryRef.current.push({ page, data: c.toDataURL() });
+    
+    const targetDataUrl = data;
+    const ctx = c.getContext('2d');
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0);
+      if (pdfMap) {
+          const dataUrl = c.toDataURL('image/webp', 0.6);
+          lastRemoteCanvasOverlayRef.current[page] = dataUrl;
+          pdfMap.set(`canvasOverlay_${page}`, dataUrl);
+      }
+    };
+    img.src = targetDataUrl;
+  };
+
+  const redoAnnotation = () => {
+    if (redoHistoryRef.current.length === 0) return;
+    const { page, data } = redoHistoryRef.current.pop();
+    const c = canvasRefs.current[page];
+    if (!c) return;
+
+    // Push current canvas to undo stack
+    annotationHistoryRef.current.push({ page, data: c.toDataURL() });
+
+    const targetDataUrl = data;
+    const ctx = c.getContext('2d');
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0);
+      if (pdfMap) {
+          const dataUrl = c.toDataURL('image/webp', 0.6);
+          lastRemoteCanvasOverlayRef.current[page] = dataUrl;
+          pdfMap.set(`canvasOverlay_${page}`, dataUrl);
+      }
+    };
+    img.src = targetDataUrl;
+  };
+
+  const clearAnnotations = () => {
+    for (let i = 1; i <= (numPages || 1); i++) {
+        const c = canvasRefs.current[i];
+        if (c) {
+            saveAnnotationSnapshot(i);
+            const ctx = c.getContext('2d');
+            ctx.clearRect(0, 0, c.width, c.height);
+            if (pdfMap) {
+                lastRemoteCanvasOverlayRef.current[i] = undefined;
+                pdfMap.delete(`canvasOverlay_${i}`);
+            }
+        }
     }
   };
 
-  const hasEdits = annotations.length > 0 || highlights.length > 0;
+  // Resize annotation canvas to match the rendered PDF page
+  useEffect(() => {
+    const resizeObserver = new ResizeObserver((entries) => {
+      window.requestAnimationFrame(() => {
+        if (!Array.isArray(entries)) return;
+        for (const entry of entries) {
+          const wrap = entry.target;
+          // IMPORTANT: Explicitly target our transparent annotation layer, NOT the react-pdf worker canvas
+          const c = wrap.querySelector('canvas.z-10');
+          if (!c) continue;
+          const rect = entry.contentRect;
+          // only resize if significant change (avoiding subpixel loop issues)
+          if (Math.abs(c.width - rect.width) > 2 || Math.abs(c.height - rect.height) > 2) {
+            if (c.width > 0 && c.height > 0) {
+                const dataUrl = c.toDataURL();
+                c.width = rect.width;
+                c.height = rect.height;
+                const ctx = c.getContext('2d');
+                const img = new Image();
+                img.onload = () => ctx.drawImage(img, 0, 0, c.width, c.height);
+                img.src = dataUrl;
+            } else {
+                c.width = rect.width;
+                c.height = rect.height;
+            }
+          }
+        }
+      });
+    });
 
-  return (
-    <div className="h-screen flex flex-col bg-gray-50">
-      {/* Toolbar */}
-      <div className="bg-white border-b p-3 flex items-center gap-2 flex-wrap shadow-sm">
-        {/* File Upload */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <Upload className="w-4 h-4 mr-2" />
-          Open PDF
-        </Button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".pdf"
-          onChange={onFileChange}
-          className="hidden"
-        />
-        
-        {(file || pdfBytes) && (
-          <span className="text-sm text-gray-600 flex items-center gap-1">
-            <FileText className="h-4 w-4" />
-            {fileName || (file ? file.name : 'PDF document')}
-          </span>
-        )}
-        
-        <Separator orientation="vertical" className="h-8" />
-        
-        {/* Tools */}
-        <Button
-          variant={activeTool === 'select' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => {
-            setActiveTool('select');
-            setIsHighlightMode(false);
-          }}
-          title="Select mode"
-        >
-          <MousePointer className="w-4 h-4" />
-        </Button>
-        
-        <Button
-          variant={activeTool === 'highlight' && isHighlightMode ? 'default' : 'outline'}
-          size="sm"
-          onClick={toggleHighlightMode}
-          title="Highlight text"
-        >
-          <Highlighter className="w-4 h-4" />
-        </Button>
-        
-        <Separator orientation="vertical" className="h-8" />
-        
-        <Button
-          variant={activeTool === 'pencil' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => {
-            setActiveTool('pencil');
-            setIsHighlightMode(false);
-          }}
-          title="Pencil"
-        >
-          <Pencil className="w-4 h-4" />
-        </Button>
-        
-        <Button
-          variant={activeTool === 'eraser' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => {
-            setActiveTool('eraser');
-            setIsHighlightMode(false);
-          }}
-          title="Eraser"
-        >
-          <Eraser className="w-4 h-4" />
-        </Button>
-        
-        <Button
-          variant={activeTool === 'rectangle' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => {
-            setActiveTool('rectangle');
-            setIsHighlightMode(false);
-          }}
-          title="Rectangle"
-        >
-          <Square className="w-4 h-4" />
-        </Button>
-        
-        <Button
-          variant={activeTool === 'circle' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => {
-            setActiveTool('circle');
-            setIsHighlightMode(false);
-          }}
-          title="Circle"
-        >
-          <Circle className="w-4 h-4" />
-        </Button>
-        
-        <Button
-          variant={activeTool === 'text' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => {
-            setActiveTool('text');
-            setIsHighlightMode(false);
-          }}
-          title="Add text"
-        >
-          <Type className="w-4 h-4" />
-        </Button>
-        
-        <Separator orientation="vertical" className="h-8" />
-        
-        {/* Colors */}
-        {isHighlightMode ? (
-          <Input
-            type="color"
-            value={highlightColor}
-            onChange={(e) => setHighlightColor(e.target.value)}
-            className="w-10 h-10 p-1 cursor-pointer rounded border"
-            title="Highlight color"
-          />
-        ) : (
-          <input
-            type="color"
-            value={drawColor}
-            onChange={(e) => setDrawColor(e.target.value)}
-            className="w-10 h-10 rounded border cursor-pointer"
-            title="Drawing color"
-          />
-        )}
-        
-        {!isHighlightMode && (
-          <Input
-            type="number"
-            min="1"
-            max="20"
-            value={drawSize}
-            onChange={(e) => setDrawSize(parseInt(e.target.value))}
-            className="w-16"
-            title="Brush size"
-          />
-        )}
+    // Observe all canvases' parent elements to size precisely over the actual PDF document page
+    const timer = setTimeout(() => {
+        Object.values(canvasRefs.current).forEach(c => {
+            if (c && c.parentElement) {
+                resizeObserver.observe(c.parentElement);
+            }
+        });
+    }, 500);
 
-        {/* Text size control */}
-        {!isHighlightMode && (
-          <Input
-            type="number"
-            min="8"
-            max="96"
-            value={selectedAnnotationId ? (annotations.find(a => a.id === selectedAnnotationId)?.size || textSize) : textSize}
-            onChange={(e) => {
-              const val = Number(e.target.value) || 12;
-              if (selectedAnnotationId) {
-                setAnnotations(prev => prev.map(a => (
-                  a.id === selectedAnnotationId ? { ...a, size: val } : a
-                )));
-                if (selectedAnnotationPage) renderCanvasForPage(selectedAnnotationPage);
-              } else {
-                setTextSize(val);
-              }
-            }}
-            className="w-20"
-            title="Text size (px)"
-          />
-        )}
-        
-        <Separator orientation="vertical" className="h-8" />
-        
-        {/* History */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={undo}
-          disabled={historyIndex < 0}
-          title="Undo"
-        >
-          <Undo className="w-4 h-4" />
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={redo}
-          disabled={historyIndex >= history.length - 1}
-          title="Redo"
-        >
-          <Redo className="w-4 h-4" />
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={clearAllForPage}
-          title="Clear page"
-        >
-          <Trash2 className="w-4 h-4" />
-        </Button>
-        
-        <Separator orientation="vertical" className="h-8" />
-        
-        {/* Zoom */}
-        <Button variant="outline" size="sm" onClick={zoomOut}>
-          <ZoomOut className="w-4 h-4" />
-        </Button>
-        <span className="text-sm min-w-[50px] text-center">{Math.round(scale * 100)}%</span>
-        <Button variant="outline" size="sm" onClick={zoomIn}>
-          <ZoomIn className="w-4 h-4" />
-        </Button>
-        
-        <Separator orientation="vertical" className="h-8" />
-        
-        {/* Save */}
-        <Button
-          variant="default"
-          size="sm"
-          onClick={saveEditedPDF}
-          disabled={!file || !hasEdits}
-        >
-          <Save className="w-4 h-4 mr-2" />
-          Save Edited PDF
-        </Button>
-      </div>
-      
-      {/* Text Input Dialog */}
-      {textPosition && (
-        <div className="absolute top-20 left-1/2 transform -translate-x-1/2 bg-white p-4 rounded-lg shadow-xl z-50 border">
-          <Input
-            value={textInput}
-            onChange={(e) => setTextInput(e.target.value)}
-            placeholder="Enter text..."
-            className="mb-2 min-w-[250px]"
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') addTextAnnotation();
-              if (e.key === 'Escape') setTextPosition(null);
-            }}
-          />
-          <div className="flex gap-2">
-            <Button size="sm" onClick={addTextAnnotation}>
-              Add Text
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setTextPosition(null)}>
-              Cancel
-            </Button>
-          </div>
+    return () => {
+        clearTimeout(timer);
+        resizeObserver.disconnect();
+    };
+  }, [numPages]);
+
+  // ─── Annotation pointer handlers ─────────────────────────────
+  const getCanvasPos = (e, c) => {
+    if (!c) return null;
+    const rect = c.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  };
+
+  const onPointerDown = (e) => {
+    if (!annotating) return; // Native scroll handles non-annotation interaction
+    const targetCanvas = e.target;
+    if (targetCanvas.tagName !== 'CANVAS') return;
+    e.preventDefault();
+    isDrawingRef.current = true;
+    lastPointRef.current = getCanvasPos(e, targetCanvas);
+    const pageNum = Number(targetCanvas.dataset.page);
+    activeCanvasPageRef.current = pageNum;
+    saveAnnotationSnapshot(pageNum);
+  };
+
+  const onPointerMove = (e) => {
+    if (!annotating || !isDrawingRef.current) return;
+    e.preventDefault();
+    const c = canvasRefs.current[activeCanvasPageRef.current];
+    if (!c) return;
+    const pos = getCanvasPos(e, c);
+    const last = lastPointRef.current;
+    if (!pos || !last) return;
+
+    const ctx = c?.getContext('2d');
+    if (!ctx) return;
+
+    ctx.beginPath();
+    ctx.moveTo(last.x, last.y);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.strokeStyle = isErasing ? 'rgba(0,0,0,1)' : annotationColor;
+    ctx.lineWidth = isErasing ? annotationSize * 4 : annotationSize;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.globalCompositeOperation = isErasing ? 'destination-out' : 'source-over';
+    ctx.stroke();
+    ctx.globalCompositeOperation = 'source-over';
+
+    lastPointRef.current = pos;
+  };
+
+  const onPointerUp = () => {
+    isPanningRef.current = false;
+    if (isDrawingRef.current) {
+        const c = canvasRefs.current[activeCanvasPageRef.current];
+        if (pdfMap && c) {
+            const dataUrl = c.toDataURL('image/webp', 0.6);
+            // Update self-echo guard BEFORE setting into Yjs
+            lastRemoteCanvasOverlayRef.current[activeCanvasPageRef.current] = dataUrl;
+            pdfMap.set(`canvasOverlay_${activeCanvasPageRef.current}`, dataUrl);
+        }
+    }
+    isDrawingRef.current = false;
+    lastPointRef.current = null;
+  };
+
+  // ─── Keyboard navigation ───────────────────────────────────────
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (!pdfDataUrl) return;
+      if (!isOwnerRef.current) return; // Only owner can navigate with keyboard
+      if (e.key === '+' || e.key === '=') zoomIn();
+      if (e.key === '-') zoomOut();
+      if (e.key === 'ArrowLeft' || e.key === 'PageUp') prevPage();
+      if (e.key === 'ArrowRight' || e.key === 'PageDown') nextPage();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [pdfDataUrl, isOwner]);
+
+  // Handle Loading History Modal
+  const loadHistory = async () => {
+    try {
+      if (token) {
+        const backendUrl = import.meta.env?.VITE_BACKEND_URL || 'https://vanibackend-production.up.railway.app';
+        const res = await fetch(`${backendUrl}/api/sessions`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          setHistoryDocs(await res.json());
+        }
+      }
+    } catch (e) {
+      console.error('History Error', e);
+    }
+    setShowHistory(true);
+  };
+
+  const historyModalJSX = showHistory && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 text-left">
+      <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl max-w-lg w-full overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b dark:border-zinc-800">
+          <h2 className="text-lg font-semibold flex items-center gap-2"><History className="w-5 h-5"/> Session History</h2>
+          <button onClick={() => setShowHistory(false)} className="p-1 hover:bg-black/5 rounded text-toolbar-foreground/60 hover:text-red-500"><X className="w-5 h-5"/></button>
         </div>
-      )}
-      
-      {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* PDF Viewer */}
-        <ScrollArea className="flex-1">
-          <div 
-            ref={containerRef}
-            className="flex flex-col items-center p-8 gap-8"
-            onMouseUp={handleTextSelect}
-          >
-            {file ? (
-              <div className="relative" ref={pageWrapperRef}>
-                <Document
-                  file={file ? file : (pdfBytes ? { data: pdfBytes } : null)}
-                  onLoadSuccess={onDocumentLoadSuccess}
-                  onLoadError={(error) => {
-                    console.error('PDF load error:', error);
-                    toast.error('Failed to load PDF');
-                  }}
-                  loading={<div className="p-8 text-center">Loading PDF...</div>}
-                  error={<div className="p-8 text-center text-red-500">Failed to load PDF</div>}
+        <div className="p-4 max-h-[60vh] overflow-y-auto">
+          {historyDocs.length === 0 ? (
+            <p className="text-center text-gray-500 py-8">No historical sessions found.</p>
+          ) : (
+            <div className="space-y-2">
+              {historyDocs.map((doc, i) => (
+                <a
+                  key={i}
+                  href={`/pdf?room=${doc.roomId}&readonly=true`}
+                  className="flex items-center justify-between p-3 rounded-lg border dark:border-zinc-700 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
                 >
-                  {/* Render ALL pages for scrolling */}
-                  {Array.from({ length: numPages || 0 }, (_, idx) => {
-                    const currentPageNum = idx + 1;
-                    return (
-                      <div 
-                        key={currentPageNum}
-                        ref={el => pageRefs.current[currentPageNum] = el}
-                        style={{ position: 'relative', marginBottom: '2rem' }} 
-                        className="shadow-2xl"
-                      >
-                        <Page
-                          pageNumber={currentPageNum}
-                          scale={scale}
-                          renderTextLayer={true}
-                          renderAnnotationLayer={false}
-                          onRenderSuccess={() => syncCanvasSizeForPage(currentPageNum)}
-                          onLoadError={error => console.error('Page load error:', error)}
-                        />
-                        
-                        {/* Canvas overlay for drawing on this page */}
-                        <canvas
-                          ref={el => canvasRefs.current[currentPageNum] = el}
-                          style={{
-                            position: 'absolute',
-                            top: 0,
-                            left: 0,
-                            zIndex: isHighlightMode ? 1 : 10,
-                            cursor: activeTool === 'select' || isHighlightMode ? 'default' : 
-                                   activeTool === 'text' ? 'text' : 'crosshair',
-                            pointerEvents: isHighlightMode ? 'none' : 'auto',
-                            touchAction: 'none'
-                          }}
-                          onMouseDown={
-                            isHighlightMode
-                              ? undefined
-                              : (e) => (
-                                  activeTool === 'text'
-                                    ? setTextPositionForPage(e, currentPageNum)
-                                    : startDrawingOnPage(e, currentPageNum)
-                                )
-                          }
-                          onMouseMove={
-                            isHighlightMode
-                              ? undefined
-                              : (e) => {
-                                  if (isDraggingText && selectedAnnotationPage === currentPageNum) {
-                                    const rect = canvasRefs.current[currentPageNum].getBoundingClientRect();
-                                    const x = (e.clientX - rect.left) / scale;
-                                    const y = (e.clientY - rect.top) / scale;
-                                    setAnnotations(prev => prev.map(a => (
-                                      a.id === selectedAnnotationId
-                                        ? { ...a, position: { x: x - dragOffset.x, y: y - dragOffset.y, pageNumber: a.position.pageNumber } }
-                                        : a
-                                    )));
-                                    renderCanvasForPage(currentPageNum);
-                                  } else if (isDrawing || activeTool === 'pencil' || activeTool === 'eraser' || activeTool === 'rectangle' || activeTool === 'circle') {
-                                    drawOnPage(e, currentPageNum);
-                                  }
-                                }
-                          }
-                          onMouseUp={
-                            isHighlightMode
-                              ? undefined
-                              : (e) => {
-                                  if (isDraggingText) {
-                                    setIsDraggingText(false);
-                                    saveToHistory(annotations, highlights);
-                                  } else if (isDrawing) {
-                                    stopDrawing();
-                                  }
-                                }
-                          }
-                          onMouseLeave={
-                            isHighlightMode
-                              ? undefined
-                              : (e) => {
-                                  if (isDraggingText) {
-                                    setIsDraggingText(false);
-                                  } else if (isDrawing) {
-                                    stopDrawing();
-                                  }
-                                }
-                          }
-                        />
-                        
-                        {/* Text highlights overlay for this page */}
-                        {highlights
-                          .filter(h => h.pageNumber === currentPageNum)
-                          .map(highlight => (
-                            <div
-                              key={highlight.id}
-                              className="absolute cursor-pointer hover:opacity-60 transition-opacity"
-                              style={{
-                                top: `${highlight.position.y * scale}px`,
-                                left: `${highlight.position.x * scale}px`,
-                                width: `${highlight.position.width * scale}px`,
-                                height: `${highlight.position.height * scale}px`,
-                                backgroundColor: highlight.color,
-                                opacity: 0.4,
-                                zIndex: 5,
-                                pointerEvents: 'auto',
-                              }}
-                              onClick={() => removeHighlight(highlight.id)}
-                              title="Click to remove highlight"
-                            />
-                          ))}
-                        
-                        {/* Page number indicator */}
-                        <div className="absolute bottom-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded">
-                          Page {currentPageNum}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </Document>
-                
-                {/* Floating Page Navigation */}
-                {numPages && (
-                  <div className="fixed bottom-20 left-1/2 transform -translate-x-1/2 flex items-center gap-4 bg-white p-2 rounded-lg shadow-lg z-50">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        const el = pageRefs.current[Math.max(1, pageNumber - 1)];
-                        if (el) {
-                          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                          setPageNumber(Math.max(1, pageNumber - 1));
-                        }
-                      }}
-                      disabled={pageNumber <= 1}
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </Button>
-                    <span className="text-sm min-w-[100px] text-center">
-                      Page {pageNumber} of {numPages}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        const el = pageRefs.current[Math.min(numPages, pageNumber + 1)];
-                        if (el) {
-                          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                          setPageNumber(Math.min(numPages, pageNumber + 1));
-                        }
-                      }}
-                      disabled={pageNumber >= numPages}
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </Button>
+                  <div>
+                    <p className="font-medium text-blue-600 dark:text-blue-400">{doc.pdfFileName}</p>
+                    <p className="text-xs text-toolbar-foreground/40 mt-1">Room: {doc.roomId} • {new Date(doc.createdAt).toLocaleString()}</p>
                   </div>
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const dashboardModalJSX = showDashboard && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 text-left">
+      <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl max-w-md w-full overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b dark:border-zinc-800">
+          <h2 className="text-lg font-semibold flex items-center gap-2"><Users className="w-5 h-5"/> Room Dashboard</h2>
+          <button onClick={() => setShowDashboard(false)} className="p-1 hover:bg-black/5 rounded text-toolbar-foreground/60 hover:text-red-500"><X className="w-5 h-5"/></button>
+        </div>
+        <div className="p-4 max-h-[60vh] overflow-y-auto space-y-2">
+           {roomState?.users?.map(u => (
+              <div key={u.id} className="flex items-center justify-between p-3 border dark:border-zinc-800 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg text-sm transition-colors">
+                <div className="flex items-center gap-3">
+                   <img src={u.picture || 'https://www.gravatar.com/avatar/?d=mp'} className="w-8 h-8 rounded-full shadow-sm" />
+                   <div>
+                     <span className="block font-medium truncate max-w-[150px]" title={u.name}>{u.name}</span>
+                     <div className="flex gap-1 mt-0.5">
+                       {roomState?.hostId === u.id && <span className="text-[10px] bg-yellow-500/20 text-yellow-600 px-1.5 py-0.5 rounded border border-yellow-500/30">Host</span>}
+                       {roomState?.ownerId === u.id && <span className="text-[10px] bg-green-500/20 text-green-600 px-1.5 py-0.5 rounded border border-green-500/30">Owner</span>}
+                       {roomState?.hostId !== u.id && roomState?.ownerId !== u.id && <span className="text-[10px] bg-gray-500/20 text-gray-500 px-1.5 py-0.5 rounded border border-gray-500/30">Participant</span>}
+                     </div>
+                   </div>
+                </div>
+                {isHost && roomState?.ownerId !== u.id && (
+                    <button onClick={() => sendWsMessage({ type: "assign_owner", targetUserId: u.id })} className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded transition-colors shadow-sm">Make Owner</button>
                 )}
               </div>
-            ) : (
-              <div className="h-full flex items-center justify-center text-gray-400">
-                <div className="text-center">
-                  <FileText className="w-24 h-24 mx-auto mb-4 opacity-50" />
-                  <p className="text-xl font-medium">No PDF loaded</p>
-                  <p className="text-sm mt-2">Click "Open PDF" to get started</p>
+           ))}
+           {(!roomState?.users || roomState.users.length === 0) && (
+              <div className="text-center text-sm text-toolbar-foreground/40 py-8">No members connected</div>
+           )}
+        </div>
+      </div>
+    </div>
+  );
+
+  // ─── Empty state (no PDF loaded) ─────────────────────────────
+  if (!pdfDataUrl) {
+    return (
+      <>
+      <div className={`h-screen w-screen overflow-hidden ${theme === 'dark' ? 'bg-[#121212]' : 'bg-[#ffffff]'} relative font-sans transition-colors duration-300`}>
+        {/* G-1: Offline/Reconnecting UI */}
+        <ConnectionBanner status={status} />
+        {/* Floating Top-Left Status + Menu */}
+        <div className="absolute top-3 left-3 z-40 pointer-events-auto flex items-center gap-2">
+          <div className="relative">
+            <button onClick={() => setShowMenu(v => !v)} className="w-9 h-9 flex items-center justify-center rounded-lg bg-toolbar border border-toolbar-foreground/20 text-toolbar-foreground hover:bg-toolbar-hover transition-colors shadow-sm" title="Menu"><Menu className="w-4 h-4" /></button>
+            {showMenu && (
+              <div className="absolute top-11 left-0 w-56 bg-toolbar border border-toolbar-foreground/15 rounded-xl shadow-xl overflow-hidden z-50">
+                <div className="p-2 space-y-1">
+                  <button onClick={() => { setShowMenu(false); setShowHistory(true); }} className="flex items-center gap-3 w-full px-3 py-2 text-sm text-toolbar-foreground hover:bg-toolbar-hover transition-colors rounded-md"><History className="w-4 h-4 text-orange-400" /> Session History</button>
+                  <button onClick={() => { setShowMenu(false); setShowDashboard(true); }} className="flex items-center gap-3 w-full px-3 py-2 text-sm text-toolbar-foreground hover:bg-toolbar-hover transition-colors rounded-md"><Users className="w-4 h-4 text-blue-400" /> Dashboard</button>
                 </div>
               </div>
             )}
           </div>
-        </ScrollArea>
+          <div className="flex items-center gap-3 bg-toolbar shadow-sm border border-toolbar-foreground/15 rounded-xl px-4 py-2 pointer-events-auto">
+            <h1 className="text-sm font-bold text-toolbar-foreground tracking-tight flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              PDF Editor
+            </h1>
+          </div>
+        </div>
+
+        {/* Top-Right Tools */}
+        <div className="absolute top-3 right-3 z-40 flex items-center gap-2 pointer-events-auto">
+          <span title={status === "connected" ? "Connected" : "Disconnected"} className={`w-2.5 h-2.5 rounded-full ${status === "connected" ? "bg-green-500" : "bg-red-400"}`} />
+          <button onClick={toggleVideo} className={`w-9 h-9 flex items-center justify-center rounded-lg border border-toolbar-foreground/20 transition-colors shadow-sm ${isVideoActive ? 'bg-blue-500 text-white' : 'bg-toolbar text-toolbar-foreground hover:bg-toolbar-hover'}`} title={isVideoActive ? "Disconnect Video" : "Join Video Call"}>
+              {isVideoActive ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+          </button>
+          <button onClick={toggleAudio} className={`w-9 h-9 flex items-center justify-center rounded-lg border border-toolbar-foreground/20 transition-colors shadow-sm ${isAudioActive ? 'bg-green-500 text-white' : 'bg-toolbar text-toolbar-foreground hover:bg-toolbar-hover'}`} title={isAudioActive ? "Disconnect Audio" : "Join Audio"}>
+              {isAudioActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+          </button>
+          <button onClick={() => setShowDashboard(true)} className="w-9 h-9 flex items-center justify-center rounded-lg bg-toolbar border border-toolbar-foreground/20 text-toolbar-foreground hover:bg-toolbar-hover transition-colors shadow-sm" title="Dashboard"><Users className="w-4 h-4" /></button>
+        </div>
+
+
+        {/* Upload prompt */}
+        <div className="flex-1 h-full w-full flex items-center justify-center bg-workspace">
+          <div
+            className="relative group cursor-pointer"
+            onClick={() => {
+               if (isOwner) fileInputRef.current?.click();
+               else toast.error("Only the room owner can upload a PDF.");
+            }}
+          >
+            {/* Glow ring */}
+            <div className="absolute -inset-1 rounded-2xl bg-gradient-to-r from-teal-500 via-blue-500 to-purple-500 opacity-30 blur-lg group-hover:opacity-60 transition-opacity duration-500" />
+            <div className="relative flex flex-col items-center gap-6 px-16 py-14 rounded-2xl border-2 border-dashed border-toolbar-foreground/20 bg-card/80 backdrop-blur-sm hover:border-primary/50 transition-all duration-300">
+              {loading ? (
+                <Loader2 className="h-16 w-16 text-primary animate-spin" />
+              ) : (
+                <Upload className="h-16 w-16 text-toolbar-foreground/40 group-hover:text-primary transition-colors duration-300" />
+              )}
+              <div className="text-center">
+                <p className="text-lg font-medium text-toolbar-foreground/80 group-hover:text-toolbar-foreground transition-colors">
+                  {loading ? 'Loading PDF…' : 'Drop or click to upload a PDF'}
+                </p>
+                <p className="text-sm text-toolbar-foreground/40 mt-1">
+                  All room members will see it instantly
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-toolbar-foreground/30">
+                <Users className="h-3.5 w-3.5" />
+                <span>Shared with everyone in the room</span>
+              </div>
+            </div>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,application/pdf"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+        </div>
       </div>
+      {historyModalJSX}
+      {dashboardModalJSX}
+    </>
+    );
+  }
+
+  // ─── PDF viewer ─────────────────────────────────────────────────
+
+  return (
+      <div className={`h-screen w-screen overflow-hidden ${theme === 'dark' ? 'bg-[#121212]' : 'bg-[#ffffff]'} relative font-sans transition-colors duration-300`}>
+        {/* G-1: Offline/Reconnecting UI */}
+        <ConnectionBanner status={status} />
+        {/* Floating Top-Left Status + Menu */}
+        <div className="absolute top-3 left-3 z-40 pointer-events-auto flex items-center gap-2">
+          <div className="relative">
+            <button onClick={() => setShowMenu(v => !v)} className="w-9 h-9 flex items-center justify-center rounded-lg bg-toolbar border border-toolbar-foreground/20 text-toolbar-foreground hover:bg-toolbar-hover transition-colors shadow-sm" title="Menu"><Menu className="w-4 h-4" /></button>
+            {showMenu && (
+              <div className="absolute top-11 left-0 w-56 bg-toolbar border border-toolbar-foreground/15 rounded-xl shadow-xl overflow-hidden z-50">
+                <div className="p-2 space-y-1">
+                  <button onClick={() => { setShowMenu(false); setShowHistory(true); }} className="flex items-center gap-3 w-full px-3 py-2 text-sm text-toolbar-foreground hover:bg-toolbar-hover transition-colors rounded-md"><History className="w-4 h-4 text-orange-400" /> Session History</button>
+                  <button onClick={() => { setShowMenu(false); setShowDashboard(true); }} className="flex items-center gap-3 w-full px-3 py-2 text-sm text-toolbar-foreground hover:bg-toolbar-hover transition-colors rounded-md"><Users className="w-4 h-4 text-blue-400" /> Dashboard</button>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-3 bg-toolbar shadow-sm border border-toolbar-foreground/15 rounded-xl px-4 py-2 pointer-events-auto">
+            <h1 className="text-sm font-bold text-toolbar-foreground tracking-tight flex items-center gap-2">
+              <FileText className="h-4 w-4 text-primary"/>
+              <span className="max-w-[150px] truncate">{pdfFileName || "PDF Viewer"}</span>
+            </h1>
+            {readonly && <span className="text-[10px] font-bold uppercase bg-orange-500/10 text-orange-500 px-2 py-0.5 rounded-md">History View</span>}
+            {isOwner && (
+              <button onClick={closePdf} className="flex items-center justify-center p-1 rounded-md text-red-400 hover:bg-red-500/10 hover:text-red-500 transition-colors" title="Close document">
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Top-Right Tools */}
+        <div className="absolute top-3 right-3 z-40 flex items-center gap-2 pointer-events-auto">
+          <span title={status === "connected" ? "Connected" : "Disconnected"} className={`w-2.5 h-2.5 rounded-full ${status === "connected" ? "bg-green-500" : "bg-red-400"}`} />
+          <button onClick={toggleVideo} className={`w-9 h-9 flex items-center justify-center rounded-lg border border-toolbar-foreground/20 transition-colors shadow-sm ${isVideoActive ? 'bg-blue-500 text-white' : 'bg-toolbar text-toolbar-foreground hover:bg-toolbar-hover'}`} title={isVideoActive ? "Disconnect Video" : "Join Video Call"}>
+              {isVideoActive ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+          </button>
+          <button onClick={toggleAudio} className={`w-9 h-9 flex items-center justify-center rounded-lg border border-toolbar-foreground/20 transition-colors shadow-sm ${isAudioActive ? 'bg-green-500 text-white' : 'bg-toolbar text-toolbar-foreground hover:bg-toolbar-hover'}`} title={isAudioActive ? "Disconnect Audio" : "Join Audio"}>
+              {isAudioActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+          </button>
+          <button onClick={() => setShowDashboard(true)} className="w-9 h-9 flex items-center justify-center rounded-lg bg-toolbar border border-toolbar-foreground/20 text-toolbar-foreground hover:bg-toolbar-hover transition-colors shadow-sm" title="Dashboard"><Users className="w-4 h-4" /></button>
+        </div>
+
+      {/* Floating Top-Center UI */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 p-1 bg-toolbar shadow-md border border-toolbar-foreground/15 rounded-2xl pointer-events-auto">
+        {/* Zoom */}
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={zoomOut}
+            disabled={scale <= 0.5}
+            className="p-2 rounded-xl text-toolbar-foreground/70 hover:bg-toolbar-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            <ZoomOut className="h-4 w-4" />
+          </button>
+          <span className="text-xs font-bold text-toolbar-foreground/60 min-w-[50px] text-center">
+            {Math.round(scale * 100)}%
+          </span>
+          <button
+            onClick={zoomIn}
+            disabled={scale >= 3}
+            className="p-2 rounded-xl text-toolbar-foreground/70 hover:bg-toolbar-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            <ZoomIn className="h-4 w-4" />
+          </button>
+        </div>
+
+        {!readonly && (
+          <>
+            <div className="w-px h-6 bg-toolbar-foreground/20 mx-1" />
+            {/* Scroll/Pan */}
+            <button
+              onClick={() => { setAnnotating(false); setIsErasing(false); }}
+              className={`p-2 rounded-xl transition-colors ${!annotating ? "bg-primary/10 text-primary" : "text-toolbar-foreground/70 hover:bg-toolbar-hover"}`}
+              title="Pan / Scroll Mode"
+            >
+              <Hand className="h-4 w-4" />
+            </button>
+
+            {/* Annotate */}
+            <button
+              onClick={() => { setAnnotating(true); setIsErasing(false); }}
+              className={`p-2 rounded-xl transition-colors ${annotating && !isErasing ? "bg-primary/10 text-primary" : "text-toolbar-foreground/70 hover:bg-toolbar-hover"}`}
+              title="Pen Tool"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+
+            {annotating && (
+              <>
+                <button
+                  onClick={() => setIsErasing(!isErasing)}
+                  className={`p-2 rounded-xl transition-colors ${isErasing ? "bg-orange-500/10 text-orange-400" : "text-toolbar-foreground/70 hover:bg-toolbar-hover"}`}
+                  title="Eraser"
+                >
+                  <Eraser className="h-4 w-4" />
+                </button>
+
+                <div className="flex items-center gap-1 pl-2 mx-1 border-l border-border">
+                  {ANNOTATION_COLORS.map(color => (
+                    <button
+                      key={color}
+                      className={`w-5 h-5 rounded-full transition-transform border border-border ${annotationColor === color && !isErasing ? "scale-110 ring-2 ring-offset-1 ring-offset-background ring-blue-500" : "hover:scale-105"}`}
+                      style={{ backgroundColor: color }}
+                      onClick={() => { setAnnotationColor(color); setIsErasing(false); }}
+                    />
+                  ))}
+                </div>
+
+                <div className="w-px h-6 bg-toolbar-foreground/20 mx-1" />
+                <div className="flex items-center gap-2 group relative px-2">
+                  <input
+                    type="range"
+                    min="1"
+                    max="15"
+                    step="1"
+                    value={annotationSize}
+                    onChange={(e) => setAnnotationSize(Number(e.target.value))}
+                    className="w-16 h-1.5 bg-toolbar-foreground/20 rounded-lg appearance-none cursor-pointer accent-primary"
+                  />
+                </div>
+
+                <div className="w-px h-6 bg-border mx-1" />
+                <button onClick={undoAnnotation} className="p-2 rounded-xl text-toolbar-foreground/70 hover:bg-black/5 dark:hover:bg-white/5 transition-colors" title="Undo">
+                  <Undo2 className="h-4 w-4" />
+                </button>
+                <button onClick={redoAnnotation} className="p-2 rounded-xl text-toolbar-foreground/70 hover:bg-black/5 dark:hover:bg-white/5 transition-colors" title="Redo">
+                  <Redo2 className="h-4 w-4" />
+                </button>
+                <button onClick={clearAnnotations} className="p-2 rounded-xl text-toolbar-foreground/70 hover:text-red-500 hover:bg-red-500/10 transition-colors" title="Clear All">
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </>
+            )}
+            
+            {isOwner && (
+              <>
+                <div className="w-px h-6 bg-border mx-1" />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1 px-3 py-1.5 ml-1 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-semibold transition-colors shadow-sm"
+                >
+                  <Upload className="h-3 w-3" />
+                  Upload
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+              </>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* PDF rendering area */}
+      <div 
+        ref={scrollContainerRef}
+        className={`absolute inset-0 pt-20 pb-6 px-6 bg-workspace ${isOwner ? 'overflow-auto' : 'overflow-hidden'}`}
+        onScroll={(e) => {
+           if (isOwnerRef.current && pdfMap && !isPanningRef.current) {
+               const now = Date.now();
+               if (now - lastScrollBroadcastRef.current > 50) {
+                   lastScrollBroadcastRef.current = now;
+                   isSyncingRef.current = true;
+                   try {
+                     pdfMap.set("scrollTop", e.target.scrollTop);
+                     pdfMap.set("scrollLeft", e.target.scrollLeft);
+                   } catch (e) {
+                     console.error('[Vani] scroll sync Yjs error:', e);
+                   } finally {
+                     isSyncingRef.current = false;
+                   }
+               }
+           }
+        }}
+        style={{ overscrollBehavior: 'contain' }}
+      >
+        <div ref={pageContainerRef} className="flex flex-col gap-4">
+          <Document
+            file={pdfDataUrl}
+            options={PDF_OPTIONS}
+            onLoadSuccess={onDocumentLoadSuccess}
+            onLoadError={(error) => {
+              console.error('PDF load error:', error);
+              toast.error('Failed to load PDF');
+            }}
+            loading={
+              <div className="flex items-center gap-3 p-12 text-toolbar-foreground/50">
+                <Loader2 className="h-6 w-6 animate-spin" />
+                Loading PDF…
+              </div>
+            }
+          >
+            {Array.from(new Array(numPages || 1), (el, index) => (
+              <div key={`page_${index + 1}`} className="relative shadow-2xl rounded-lg mb-4 mx-auto w-fit">
+                <Page
+                  pageNumber={index + 1}
+                  scale={scale}
+                  renderTextLayer={false}
+                  renderAnnotationLayer={false}
+                  loading={
+                    <div className="flex items-center justify-center p-12 text-toolbar-foreground/50">
+                      <Loader2 className="h-6 w-6 animate-spin" />
+                    </div>
+                  }
+                />
+                {!readonly && (
+                  <canvas
+                    ref={(c) => {
+                       if (c) {
+                         canvasRefs.current[index + 1] = c;
+                         // G-2: Ensure canvas is sized after CSS layout completes
+                         let retries = 0;
+                         const sizeCanvas = () => {
+                           const parent = c.parentElement;
+                           if (!parent) return;
+                           const w = parent.offsetWidth;
+                           const h = parent.offsetHeight;
+                           if (w === 0 || h === 0) {
+                             if (retries++ < 10) setTimeout(sizeCanvas, 100);
+                             return;
+                           }
+                           if (c.width !== w || c.height !== h) {
+                             c.width = w;
+                             c.height = h;
+                           }
+                         };
+                         requestAnimationFrame(sizeCanvas);
+                       }
+                    }}
+                    data-page={index + 1}
+                    className="absolute inset-0 z-10"
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      cursor: annotating ? (isErasing ? 'cell' : 'crosshair') : 'default',
+                      pointerEvents: annotating ? 'auto' : 'none',
+                    }}
+                    onMouseDown={onPointerDown}
+                    onMouseMove={onPointerMove}
+                    onMouseUp={onPointerUp}
+                    onMouseLeave={onPointerUp}
+                    onTouchStart={onPointerDown}
+                    onTouchMove={onPointerMove}
+                    onTouchEnd={onPointerUp}
+                  />
+                )}
+              </div>
+            ))}
+          </Document>
+        </div>
+      </div>
+
+      {historyModalJSX}
+      {dashboardModalJSX}
     </div>
   );
 };
