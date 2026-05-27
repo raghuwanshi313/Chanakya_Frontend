@@ -1,9 +1,8 @@
 // PDF Viewer with collaborative sharing via Yjs.
 // When a user uploads a PDF, the file data is stored in a shared Yjs map
 // so all room members instantly see and can navigate the same document.
-import { useState, useEffect, useRef, useCallback, useMemo, useContext } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { AuthContext } from '@/App';
 import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import { useSearchParams } from 'react-router-dom';
@@ -26,23 +25,10 @@ import {
   Hand,
   History,
   Eraser,
-  Menu, Sun, Moon, LogOut, PaintBucket, Copy, Check, Mic, MicOff, Video, VideoOff
 } from 'lucide-react';
-import { useTheme } from '@/context/ThemeContext';
-import { ConnectionBanner } from "@/components/shared/ConnectionBanner";
-import { Link } from 'react-router-dom';
-import { useMedia } from "@/context/MediaContext";
 
 // Configure PDF.js worker from public folder
 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
-
-// Stable options object — MUST be outside component or memoized.
-// Recreating this inline every render destroys the PDF.js WebWorker mid-load.
-const PDF_OPTIONS = {
-  cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
-  cMapPacked: true,
-  standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
-};
 
 // Annotation drawing colors
 const ANNOTATION_COLORS = [
@@ -53,7 +39,7 @@ const ANNOTATION_COLORS = [
 const PDFMerged = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const readonly = searchParams.get('readonly') === 'true';
-  const token = useContext(AuthContext);
+  const token = localStorage.getItem('auth_token');
 
   // Stable room ID mapped directly from URL
   const roomId = searchParams.get('room');
@@ -61,11 +47,6 @@ const PDFMerged = () => {
   const [showHistory, setShowHistory] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
   const [historyDocs, setHistoryDocs] = useState([]);
-  const [showMenu, setShowMenu] = useState(false);
-  const [copiedLink, setCopiedLink] = useState(false);
-  const { theme, toggleTheme } = useTheme();
-  const { isAudioActive, toggleAudio, isVideoActive, toggleVideo } = useMedia();
-  const searchString = searchParams.toString() ? `?${searchParams.toString()}` : "";
 
   // Generate a room if none exists, but only if we are actively viewing the PDF section
   useEffect(() => {
@@ -89,7 +70,6 @@ const PDFMerged = () => {
   const [pdfDataUrl, setPdfDataUrl] = useState(null);
   const pdfDataUrlRef = useRef(null); // Always-fresh ref for use in Yjs observer (avoids stale closures)
   const [numPages, setNumPages] = useState(null);
-  const numPagesRef = useRef(null); // stable ref for observer closures
   const [scale, setScale] = useState(1.0);
   const [loading, setLoading] = useState(false);
   const [pdfFileName, setPdfFileName] = useState('');
@@ -116,10 +96,26 @@ const PDFMerged = () => {
   const scrollContainerRef = useRef(null);
   const isPanningRef = useRef(false);
   const panStartRef = useRef({ x: 0, y: 0, sL: 0, sT: 0 });
+  const [containerWidth, setContainerWidth] = useState(null);
 
   const fileInputRef = useRef(null);
   const isSyncingRef = useRef(false);  // prevent echo loops
   const lastRemoteCanvasOverlayRef = useRef({});
+
+  // Measure the scroll container width so PDF pages can fit responsively
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      const entry = entries[0];
+      if (entry) {
+        // Subtract padding (p-6 = 24px each side = 48px total)
+        setContainerWidth(Math.floor(entry.contentRect.width) - 48);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Block all scroll input (wheel, touch, scrollbar drag) for non-owners
   useEffect(() => {
@@ -190,30 +186,23 @@ const PDFMerged = () => {
         setPdfFileName(remoteName);
       }
       
-      // B-5: Only process canvasOverlay keys that actually changed in this transaction.
-      // This removes the hardcoded 50-page ceiling and avoids wasteful lookups.
-      if (event && event.keysChanged) {
-        event.keysChanged.forEach(key => {
-          if (!key.startsWith('canvasOverlay_')) return;
-          const i = parseInt(key.replace('canvasOverlay_', ''), 10);
-          if (!i || isNaN(i)) return;
-          const rc = pdfMap.get(key);
+      // We expect numPages to be rendered and sized soon
+      // For any canvas changes available from Yjs:
+      for (let i = 1; i <= 50; i++) {
+          const rc = pdfMap.get(`canvasOverlay_${i}`);
           if (rc !== undefined && rc !== lastRemoteCanvasOverlayRef.current[i]) {
-            lastRemoteCanvasOverlayRef.current[i] = rc;
-            const c = canvasRefs.current[i];
-            if (c && c.toDataURL('image/webp', 0.6) === rc) return; // self-echo
-            if (c) {
-              applyRemoteCanvas(c, rc);
-            } else {
-              // Canvas not mounted yet (page not in viewport) — retry after paint
-              const retryId = setTimeout(() => {
-                if (canvasRefs.current[i]) applyRemoteCanvas(canvasRefs.current[i], rc);
-              }, 300);
-              // No need to clear — one-shot
-              void retryId;
-            }
+              lastRemoteCanvasOverlayRef.current[i] = rc;
+              const c = canvasRefs.current[i];
+              // Self-echo guard: skip if this canvas already matches
+              if (c && c.toDataURL('image/webp', 0.6) === rc) continue;
+              if (c) {
+                  applyRemoteCanvas(c, rc);
+              } else {
+                  setTimeout(() => {
+                      if (canvasRefs.current[i]) applyRemoteCanvas(canvasRefs.current[i], rc);
+                  }, 300);
+              }
           }
-        });
       }
 
       // Detect explicit remote PDF removal: only clear if the 'pdfData' key
@@ -221,7 +210,6 @@ const PDFMerged = () => {
       if (event && event.keysChanged && event.keysChanged.has('pdfData') && !remotePdf) {
         setPdfDataUrl(null);
         setNumPages(null);
-        numPagesRef.current = null;
         setPdfFileName('');
       }
 
@@ -269,19 +257,14 @@ const PDFMerged = () => {
       // Push to Yjs so all room members get it
       if (pdfMap) {
         isSyncingRef.current = true;
-        try {
-          pdfMap.set('pdfData', dataUrl);
-          pdfMap.set('fileName', file.name);
-        } catch (e) {
-          console.error('[Vani] handleFileUpload Yjs error:', e);
-        } finally {
-          isSyncingRef.current = false;
-        }
+        pdfMap.set('pdfData', dataUrl);
+        pdfMap.set('fileName', file.name);
+        isSyncingRef.current = false;
       }
 
       // Record to Session History Database
       if (token && roomId) {
-        const backendUrl = import.meta.env?.VITE_BACKEND_URL || 'https://vanibackend-production.up.railway.app';
+        const backendUrl = import.meta.env?.VITE_BACKEND_URL || 'https://vani-backend-mjsl.onrender.com';
         fetch(`${backendUrl}/api/sessions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -305,7 +288,6 @@ const PDFMerged = () => {
   // ─── PDF loaded callback ────────────────────────────────────────
   const onDocumentLoadSuccess = ({ numPages: n }) => {
     setNumPages(n);
-    numPagesRef.current = n;
     setLoading(false);
   };
 
@@ -320,13 +302,8 @@ const PDFMerged = () => {
       if (newPage !== prev) {
         if (pdfMap) {
           isSyncingRef.current = true;
-          try {
-            pdfMap.set('currentPage', newPage);
-          } catch (e) {
-            console.error('[Vani] changePage Yjs error:', e);
-          } finally {
-            isSyncingRef.current = false;
-          }
+          pdfMap.set('currentPage', newPage);
+          isSyncingRef.current = false;
         }
         // Native scrolling has eliminated the need to swap static overlays here. 
         // Canvases are now persisted on the DOM alongside their respective pages.
@@ -355,15 +332,10 @@ const PDFMerged = () => {
     setPdfFileName('');
     if (pdfMap) {
       isSyncingRef.current = true;
-      try {
-        pdfMap.delete('pdfData');
-        pdfMap.delete('fileName');
-        pdfMap.delete('currentPage');
-      } catch (e) {
-        console.error('[Vani] closePdf Yjs error:', e);
-      } finally {
-        isSyncingRef.current = false;
-      }
+      pdfMap.delete('pdfData');
+      pdfMap.delete('fileName');
+      pdfMap.delete('currentPage');
+      isSyncingRef.current = false;
     }
     toast('PDF removed');
   }, [pdfMap]);
@@ -446,8 +418,7 @@ const PDFMerged = () => {
         if (!Array.isArray(entries)) return;
         for (const entry of entries) {
           const wrap = entry.target;
-          // IMPORTANT: Explicitly target our transparent annotation layer, NOT the react-pdf worker canvas
-          const c = wrap.querySelector('canvas.z-10');
+          const c = wrap.querySelector('canvas');
           if (!c) continue;
           const rect = entry.contentRect;
           // only resize if significant change (avoiding subpixel loop issues)
@@ -564,7 +535,7 @@ const PDFMerged = () => {
   const loadHistory = async () => {
     try {
       if (token) {
-        const backendUrl = import.meta.env?.VITE_BACKEND_URL || 'https://vanibackend-production.up.railway.app';
+        const backendUrl = import.meta.env?.VITE_BACKEND_URL || 'https://vani-backend-mjsl.onrender.com';
         const res = await fetch(`${backendUrl}/api/sessions`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -646,41 +617,27 @@ const PDFMerged = () => {
   // ─── Empty state (no PDF loaded) ─────────────────────────────
   if (!pdfDataUrl) {
     return (
-      <>
-      <div className={`h-screen w-screen overflow-hidden ${theme === 'dark' ? 'bg-[#121212]' : 'bg-[#ffffff]'} relative font-sans transition-colors duration-300`}>
-        {/* G-1: Offline/Reconnecting UI */}
-        <ConnectionBanner status={status} />
-        {/* Floating Top-Left Status + Menu */}
-        <div className="absolute top-3 left-3 z-40 pointer-events-auto flex items-center gap-2">
-          <div className="relative">
-            <button onClick={() => setShowMenu(v => !v)} className="w-9 h-9 flex items-center justify-center rounded-lg bg-toolbar border border-toolbar-foreground/20 text-toolbar-foreground hover:bg-toolbar-hover transition-colors shadow-sm" title="Menu"><Menu className="w-4 h-4" /></button>
-            {showMenu && (
-              <div className="absolute top-11 left-0 w-56 bg-toolbar border border-toolbar-foreground/15 rounded-xl shadow-xl overflow-hidden z-50">
-                <div className="p-2 space-y-1">
-                  <button onClick={() => { setShowMenu(false); setShowHistory(true); }} className="flex items-center gap-3 w-full px-3 py-2 text-sm text-toolbar-foreground hover:bg-toolbar-hover transition-colors rounded-md"><History className="w-4 h-4 text-orange-400" /> Session History</button>
-                  <button onClick={() => { setShowMenu(false); setShowDashboard(true); }} className="flex items-center gap-3 w-full px-3 py-2 text-sm text-toolbar-foreground hover:bg-toolbar-hover transition-colors rounded-md"><Users className="w-4 h-4 text-blue-400" /> Dashboard</button>
-                </div>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-3 bg-toolbar shadow-sm border border-toolbar-foreground/15 rounded-xl px-4 py-2 pointer-events-auto">
-            <h1 className="text-sm font-bold text-toolbar-foreground tracking-tight flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              PDF Editor
-            </h1>
-          </div>
-        </div>
-
-        {/* Top-Right Tools */}
-        <div className="absolute top-3 right-3 z-40 flex items-center gap-2 pointer-events-auto">
-          <span title={status === "connected" ? "Connected" : "Disconnected"} className={`w-2.5 h-2.5 rounded-full ${status === "connected" ? "bg-green-500" : "bg-red-400"}`} />
-          <button onClick={toggleVideo} className={`w-9 h-9 flex items-center justify-center rounded-lg border border-toolbar-foreground/20 transition-colors shadow-sm ${isVideoActive ? 'bg-blue-500 text-white' : 'bg-toolbar text-toolbar-foreground hover:bg-toolbar-hover'}`} title={isVideoActive ? "Disconnect Video" : "Join Video Call"}>
-              {isVideoActive ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+      <div className="h-screen w-screen overflow-hidden bg-workspace relative font-sans">
+        {/* Floating Header */}
+        <div className="absolute top-4 left-4 z-40 flex items-center gap-3 bg-toolbar shadow-sm border border-toolbar-foreground/15 rounded-xl px-4 py-2 pointer-events-auto">
+          <h1 className="text-sm font-bold text-toolbar-foreground tracking-tight pr-2 border-r border-toolbar-foreground/20 flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            PDF Editor
+          </h1>
+          <button
+            onClick={() => setShowDashboard(true)}
+            className="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-semibold text-toolbar-foreground/80 hover:bg-toolbar-hover hover:text-toolbar-foreground transition-colors"
+          >
+            <Users className="h-4 w-4 text-blue-500" />
+            Dashboard
           </button>
-          <button onClick={toggleAudio} className={`w-9 h-9 flex items-center justify-center rounded-lg border border-toolbar-foreground/20 transition-colors shadow-sm ${isAudioActive ? 'bg-green-500 text-white' : 'bg-toolbar text-toolbar-foreground hover:bg-toolbar-hover'}`} title={isAudioActive ? "Disconnect Audio" : "Join Audio"}>
-              {isAudioActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+          <button
+            onClick={() => setShowHistory(true)}
+            className="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-semibold text-toolbar-foreground/80 hover:bg-toolbar-hover hover:text-toolbar-foreground transition-colors"
+          >
+            <History className="h-4 w-4 text-orange-500" />
+            History
           </button>
-          <button onClick={() => setShowDashboard(true)} className="w-9 h-9 flex items-center justify-center rounded-lg bg-toolbar border border-toolbar-foreground/20 text-toolbar-foreground hover:bg-toolbar-hover transition-colors shadow-sm" title="Dashboard"><Users className="w-4 h-4" /></button>
         </div>
 
 
@@ -724,56 +681,39 @@ const PDFMerged = () => {
           />
         </div>
       </div>
-      {historyModalJSX}
-      {dashboardModalJSX}
-    </>
     );
   }
 
   // ─── PDF viewer ─────────────────────────────────────────────────
 
   return (
-      <div className={`h-screen w-screen overflow-hidden ${theme === 'dark' ? 'bg-[#121212]' : 'bg-[#ffffff]'} relative font-sans transition-colors duration-300`}>
-        {/* G-1: Offline/Reconnecting UI */}
-        <ConnectionBanner status={status} />
-        {/* Floating Top-Left Status + Menu */}
-        <div className="absolute top-3 left-3 z-40 pointer-events-auto flex items-center gap-2">
-          <div className="relative">
-            <button onClick={() => setShowMenu(v => !v)} className="w-9 h-9 flex items-center justify-center rounded-lg bg-toolbar border border-toolbar-foreground/20 text-toolbar-foreground hover:bg-toolbar-hover transition-colors shadow-sm" title="Menu"><Menu className="w-4 h-4" /></button>
-            {showMenu && (
-              <div className="absolute top-11 left-0 w-56 bg-toolbar border border-toolbar-foreground/15 rounded-xl shadow-xl overflow-hidden z-50">
-                <div className="p-2 space-y-1">
-                  <button onClick={() => { setShowMenu(false); setShowHistory(true); }} className="flex items-center gap-3 w-full px-3 py-2 text-sm text-toolbar-foreground hover:bg-toolbar-hover transition-colors rounded-md"><History className="w-4 h-4 text-orange-400" /> Session History</button>
-                  <button onClick={() => { setShowMenu(false); setShowDashboard(true); }} className="flex items-center gap-3 w-full px-3 py-2 text-sm text-toolbar-foreground hover:bg-toolbar-hover transition-colors rounded-md"><Users className="w-4 h-4 text-blue-400" /> Dashboard</button>
-                </div>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-3 bg-toolbar shadow-sm border border-toolbar-foreground/15 rounded-xl px-4 py-2 pointer-events-auto">
-            <h1 className="text-sm font-bold text-toolbar-foreground tracking-tight flex items-center gap-2">
-              <FileText className="h-4 w-4 text-primary"/>
-              <span className="max-w-[150px] truncate">{pdfFileName || "PDF Viewer"}</span>
-            </h1>
-            {readonly && <span className="text-[10px] font-bold uppercase bg-orange-500/10 text-orange-500 px-2 py-0.5 rounded-md">History View</span>}
-            {isOwner && (
-              <button onClick={closePdf} className="flex items-center justify-center p-1 rounded-md text-red-400 hover:bg-red-500/10 hover:text-red-500 transition-colors" title="Close document">
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Top-Right Tools */}
-        <div className="absolute top-3 right-3 z-40 flex items-center gap-2 pointer-events-auto">
-          <span title={status === "connected" ? "Connected" : "Disconnected"} className={`w-2.5 h-2.5 rounded-full ${status === "connected" ? "bg-green-500" : "bg-red-400"}`} />
-          <button onClick={toggleVideo} className={`w-9 h-9 flex items-center justify-center rounded-lg border border-toolbar-foreground/20 transition-colors shadow-sm ${isVideoActive ? 'bg-blue-500 text-white' : 'bg-toolbar text-toolbar-foreground hover:bg-toolbar-hover'}`} title={isVideoActive ? "Disconnect Video" : "Join Video Call"}>
-              {isVideoActive ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+    <div className="h-screen w-screen overflow-hidden bg-workspace relative font-sans">
+      {/* Floating Top-Left Status + Dashboard */}
+      <div className="absolute top-4 left-4 z-40 flex items-center gap-3 bg-toolbar shadow-sm border border-toolbar-foreground/15 rounded-xl px-4 py-2 pointer-events-auto">
+        <h1 className="text-sm font-bold text-toolbar-foreground tracking-tight pr-2 border-r border-toolbar-foreground/20 flex items-center gap-2">
+          <FileText className="h-4 w-4 text-primary"/>
+          <span className="max-w-[150px] truncate">{pdfFileName || "PDF Viewer"}</span>
+        </h1>
+        {readonly && <span className="text-[10px] font-bold uppercase bg-orange-500/10 text-orange-500 px-2 py-0.5 rounded-md">History View</span>}
+        <button
+          onClick={() => setShowDashboard(true)}
+          className="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-semibold text-toolbar-foreground/80 hover:bg-toolbar-hover hover:text-toolbar-foreground transition-colors"
+          title="Manage Members"
+        >
+          <Users className="h-4 w-4 text-blue-500" />
+          Dashboard
+        </button>
+        {isOwner && (
+          <button
+            onClick={closePdf}
+            className="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-semibold text-red-400 hover:bg-red-500/10 hover:text-red-500 transition-colors"
+            title="Remove Document"
+          >
+            <X className="h-4 w-4" />
+            Close
           </button>
-          <button onClick={toggleAudio} className={`w-9 h-9 flex items-center justify-center rounded-lg border border-toolbar-foreground/20 transition-colors shadow-sm ${isAudioActive ? 'bg-green-500 text-white' : 'bg-toolbar text-toolbar-foreground hover:bg-toolbar-hover'}`} title={isAudioActive ? "Disconnect Audio" : "Join Audio"}>
-              {isAudioActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-          </button>
-          <button onClick={() => setShowDashboard(true)} className="w-9 h-9 flex items-center justify-center rounded-lg bg-toolbar border border-toolbar-foreground/20 text-toolbar-foreground hover:bg-toolbar-hover transition-colors shadow-sm" title="Dashboard"><Users className="w-4 h-4" /></button>
-        </div>
+        )}
+      </div>
 
       {/* Floating Top-Center UI */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 p-1 bg-toolbar shadow-md border border-toolbar-foreground/15 rounded-2xl pointer-events-auto">
@@ -899,23 +839,17 @@ const PDFMerged = () => {
                if (now - lastScrollBroadcastRef.current > 50) {
                    lastScrollBroadcastRef.current = now;
                    isSyncingRef.current = true;
-                   try {
-                     pdfMap.set("scrollTop", e.target.scrollTop);
-                     pdfMap.set("scrollLeft", e.target.scrollLeft);
-                   } catch (e) {
-                     console.error('[Vani] scroll sync Yjs error:', e);
-                   } finally {
-                     isSyncingRef.current = false;
-                   }
+                   pdfMap.set("scrollTop", e.target.scrollTop);
+                   pdfMap.set("scrollLeft", e.target.scrollLeft);
+                   isSyncingRef.current = false;
                }
            }
         }}
         style={{ overscrollBehavior: 'contain' }}
       >
-        <div ref={pageContainerRef} className="flex flex-col gap-4">
+        <div ref={pageContainerRef} className="flex flex-col items-center gap-4">
           <Document
             file={pdfDataUrl}
-            options={PDF_OPTIONS}
             onLoadSuccess={onDocumentLoadSuccess}
             onLoadError={(error) => {
               console.error('PDF load error:', error);
@@ -929,7 +863,7 @@ const PDFMerged = () => {
             }
           >
             {Array.from(new Array(numPages || 1), (el, index) => (
-              <div key={`page_${index + 1}`} className="relative shadow-2xl rounded-lg mb-4 mx-auto w-fit">
+              <div key={`page_${index + 1}`} className="relative shadow-2xl rounded-lg mb-4">
                 <Page
                   pageNumber={index + 1}
                   scale={scale}
@@ -946,23 +880,18 @@ const PDFMerged = () => {
                     ref={(c) => {
                        if (c) {
                          canvasRefs.current[index + 1] = c;
-                         // G-2: Ensure canvas is sized after CSS layout completes
-                         let retries = 0;
-                         const sizeCanvas = () => {
+                         // Size canvas drawing surface to match display size
+                         requestAnimationFrame(() => {
                            const parent = c.parentElement;
-                           if (!parent) return;
-                           const w = parent.offsetWidth;
-                           const h = parent.offsetHeight;
-                           if (w === 0 || h === 0) {
-                             if (retries++ < 10) setTimeout(sizeCanvas, 100);
-                             return;
+                           if (parent) {
+                             const w = parent.offsetWidth;
+                             const h = parent.offsetHeight;
+                             if (w > 0 && h > 0 && (c.width !== w || c.height !== h)) {
+                               c.width = w;
+                               c.height = h;
+                             }
                            }
-                           if (c.width !== w || c.height !== h) {
-                             c.width = w;
-                             c.height = h;
-                           }
-                         };
-                         requestAnimationFrame(sizeCanvas);
+                         });
                        }
                     }}
                     data-page={index + 1}
